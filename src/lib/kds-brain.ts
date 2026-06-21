@@ -92,8 +92,9 @@ export function computeBrainSnapshot({
   urgentCashierCount,
 }: ComputeBrainInput): BrainSnapshot {
   const activeOrders = orders.filter((order) => order.status !== "delivered");
+  const activeOrderById = new Map(activeOrders.map((order) => [order.id, order]));
   const pizzasToPrepare = activeOrders.flatMap((order) => (
-    order.status === "to_prepare" ? order.items ?? [] : []
+    order.status === "to_prepare" && isOrderDueForPrep(order) ? order.items ?? [] : []
   ));
   const pizzasInOven = activeOrders.flatMap((order) => (
     order.status === "in_oven" ? order.items ?? [] : []
@@ -101,7 +102,11 @@ export function computeBrainSnapshot({
   const pizzasReady = activeOrders.flatMap((order) => (
     order.status === "ready" ? order.items ?? [] : []
   ));
-  const paninosPending = paninoItems.filter((item) => item.status === "pending");
+  const paninosPending = paninoItems.filter((item) => {
+    if (item.status !== "pending") return false;
+    const order = activeOrderById.get(item.order_id);
+    return !order || isOrderDueForPrep(order) || order.pains_panino_status === "pret";
+  });
   const paninosInProgress = paninoItems.filter((item) => item.status === "in_progress");
   const activePaninoItems = [...paninosPending, ...paninosInProgress];
 
@@ -250,6 +255,11 @@ function computePizzaioloCapacity(prepTimePerPizzaSec: number) {
 function computePizzaioloPacePercent(prepTimePerPizzaSec: number) {
   const safePrepTime = Math.max(70, prepTimePerPizzaSec || BASE_PREP_TIME_PER_PIZZA_SEC);
   return Math.round((BASE_PREP_TIME_PER_PIZZA_SEC / safePrepTime) * 100);
+}
+
+function isOrderDueForPrep(order: Order) {
+  const dueAt = order.prep_start_time ?? order.requested_time;
+  return new Date(dueAt).getTime() <= Date.now();
 }
 
 function pizzaPrepWeight(name: string) {
