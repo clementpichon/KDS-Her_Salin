@@ -77,6 +77,8 @@ function AssistantPage() {
   }
 
   const tone = levelTone(snapshot.globalLevel);
+  const bottleneckLabel = snapshot.bottleneck.load > 0 ? snapshot.bottleneck.label : "Aucun goulot";
+  const bottleneckDetails = snapshot.bottleneck.load > 0 ? snapshot.bottleneck.details : "Aucun poste en charge immédiate";
 
   return (
     <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -86,9 +88,9 @@ function AssistantPage() {
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-background/80 px-3 py-1 text-xs font-black uppercase text-muted-foreground">
               <BrainCircuit className="h-4 w-4" /> Cerveau assistant
             </div>
-            <h1 className="text-2xl font-black md:text-4xl">Goulot actuel : {snapshot.bottleneck.label}</h1>
+            <h1 className="text-2xl font-black md:text-4xl">Goulot actuel : {bottleneckLabel}</h1>
             <p className="mt-2 max-w-2xl text-sm text-foreground/75 md:text-base">
-              {snapshot.bottleneck.details}. Niveau global : <span className="font-bold">{levelLabel(snapshot.globalLevel)}</span>.
+              {bottleneckDetails}. Niveau global : <span className="font-bold">{levelLabel(snapshot.globalLevel)}</span>.
             </p>
           </div>
           <div className={`rounded-2xl px-4 py-3 text-center font-black ${tone.badge}`}>

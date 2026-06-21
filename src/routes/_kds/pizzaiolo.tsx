@@ -344,7 +344,7 @@ function Pizzaiolo() {
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pizzas`, pizzaOrderIds, []); }}
                             disabled={!canStart || busyIds.has(`${job.id}-pizzas`)}
-                            className="w-full h-12 text-base font-bold bg-status-oven hover:bg-status-oven/90"
+                            className={`w-full h-12 text-base font-bold ${canStart ? "bg-status-oven hover:bg-status-oven/90" : "bg-muted text-muted-foreground hover:bg-muted"}`}
                           >
                             <Flame className="mr-2 h-5 w-5" />
                             {!canStart ? `À lancer dans ${mins} min` : busyIds.has(`${job.id}-pizzas`) ? "Envoi…" : `Pizzas au four (${done}/${total})`}
@@ -354,7 +354,7 @@ function Pizzaiolo() {
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pains`, [], breadOrderIds); }}
                             disabled={!canStart || busyIds.has(`${job.id}-pains`)}
-                            className="w-full h-12 text-base font-bold bg-primary hover:bg-primary/90"
+                            className={`w-full h-12 text-base font-bold ${canStart ? "bg-primary hover:bg-primary/90" : "bg-muted text-muted-foreground hover:bg-muted"}`}
                           >
                             <Sandwich className="mr-2 h-5 w-5" />
                             {!canStart ? `Pain${breadCount > 1 ? "s" : ""} à lancer dans ${mins} min` : busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
