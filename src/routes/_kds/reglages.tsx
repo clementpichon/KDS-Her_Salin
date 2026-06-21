@@ -27,6 +27,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { KDS_AUTH_KEY, resetKdsPassword, updateKdsPassword, verifyKdsCredentials } from "@/lib/kds-auth";
 import { computeStock } from "@/lib/scheduling";
@@ -36,6 +37,7 @@ import type { Settings, Pizza, Ingredient, PaninoProduct } from "@/lib/kds-types
 type SettingsForm = Omit<Settings, "id" | "paton_losses">;
 
 const SHARED_INGREDIENT_PRODUCT_KEYS = ["panino", "fishno"];
+const BASE_PIZZAIOLO_PREP_TIME_SEC = 120;
 
 type LocalControlSettings = {
   serviceOpen: boolean;
@@ -109,6 +111,7 @@ function Reglages() {
   const activeOrders = orders.filter((order) => order.status !== "delivered");
   const pendingPizzaCount = activeOrders.reduce((total, order) => total + (order.items?.length ?? 0), 0);
   const pendingPaninoCount = paninoItems.filter((item) => item.status !== "done").length;
+  const pizzaioloPace = prepTimeToPacePercent(form.prep_time_per_pizza_sec);
 
   const save = async () => {
     const { error } = await supabase.from("settings").update(form).eq("id", 1);
@@ -261,6 +264,10 @@ function Reglages() {
               </Button>
             </div>
             <Field id="oven_capacity" label="Capacité four (pizzas simultanées)" value={form.oven_capacity} onChange={(v) => setForm({ ...form, oven_capacity: v })} />
+            <PizzaioloPaceSlider
+              value={pizzaioloPace}
+              onChange={(pace) => setForm({ ...form, prep_time_per_pizza_sec: pacePercentToPrepTime(pace) })}
+            />
             <Field id="cook_time_sec" label="Temps de cuisson (secondes)" value={form.cook_time_sec} onChange={(v) => setForm({ ...form, cook_time_sec: v })} />
             <Field id="prep_time_per_pizza_sec" label="Préparation par pizza (secondes)" value={form.prep_time_per_pizza_sec} onChange={(v) => setForm({ ...form, prep_time_per_pizza_sec: v })} />
             <Field id="boxing_time_sec" label="Mise en boîte (secondes)" value={form.boxing_time_sec} onChange={(v) => setForm({ ...form, boxing_time_sec: v })} />
@@ -484,6 +491,59 @@ function ToggleRow({
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   );
+}
+
+function PizzaioloPaceSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const tone =
+    value < 90 ? "Fatigue élevée"
+    : value > 110 ? "Très bonne cadence"
+    : "Cadence normale";
+
+  return (
+    <div className="rounded-xl border bg-background p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <Label htmlFor="pizzaiolo_pace">Cadence pizzaiolo</Label>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Le pizzaiolo ajuste selon sa fatigue. L'assistant devient plus prudent quand la cadence baisse.
+          </p>
+        </div>
+        <div className="shrink-0 rounded-full bg-primary/10 px-3 py-1 text-sm font-black text-primary">
+          {value}%
+        </div>
+      </div>
+      <Slider
+        id="pizzaiolo_pace"
+        min={70}
+        max={130}
+        step={5}
+        value={[value]}
+        onValueChange={([next]) => onChange(next)}
+      />
+      <div className="mt-3 flex items-center justify-between text-xs font-semibold text-muted-foreground">
+        <span>Fatigué</span>
+        <span className="rounded-full border bg-card px-2 py-1 text-foreground">{tone}</span>
+        <span>En forme</span>
+      </div>
+    </div>
+  );
+}
+
+function prepTimeToPacePercent(prepTimeSec: number | undefined) {
+  const safePrepTime = Math.max(70, prepTimeSec || BASE_PIZZAIOLO_PREP_TIME_SEC);
+  const pace = Math.round((BASE_PIZZAIOLO_PREP_TIME_SEC / safePrepTime) * 100);
+  return Math.max(70, Math.min(130, Math.round(pace / 5) * 5));
+}
+
+function pacePercentToPrepTime(pacePercent: number) {
+  const safePace = Math.max(70, Math.min(130, pacePercent));
+  return Math.round(BASE_PIZZAIOLO_PREP_TIME_SEC * (100 / safePace));
 }
 
 function PaninoProductsManager() {

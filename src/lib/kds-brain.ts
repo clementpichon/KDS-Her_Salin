@@ -79,6 +79,9 @@ const PIZZA_FINISH_WEIGHTS: Record<string, number> = {
   "végétarienne": 3,
 };
 
+const BASE_PIZZAIOLO_CAPACITY = 4;
+const BASE_PREP_TIME_PER_PIZZA_SEC = 120;
+
 export function computeBrainSnapshot({
   orders,
   paninoItems,
@@ -124,9 +127,11 @@ export function computeBrainSnapshot({
     activePaninoItems.filter((item) => item.product_key === "fishno").length;
 
   const cashierLoad = readyOrders * 1.5 + urgentCashierCount * 1.25 + Math.max(0, activeOrders.length - 8) * 0.25;
+  const pizzaioloCapacity = computePizzaioloCapacity(settings.prep_time_per_pizza_sec);
+  const pizzaioloDetails = `Préparation pizzas + pains Pani'NO · cadence ${computePizzaioloPacePercent(settings.prep_time_per_pizza_sec)}%`;
 
   const stations = [
-    station("pizzaiolo", "Pizzaiolo", pizzaioloLoad, 4, "Préparation pizzas + pains Pani'NO"),
+    station("pizzaiolo", "Pizzaiolo", pizzaioloLoad, pizzaioloCapacity, pizzaioloDetails),
     station("four", "Four", fourLoad, Math.max(1, settings.oven_capacity), "Cuisson pizzas et pains"),
     station("finition", "Finition", finitionLoad, 4, "Défournage, garniture, mise en boîte"),
     station("panino", "Pani'NO", paninoLoad, 2, "Assemblage Pani'NO / Fish & NO"),
@@ -138,7 +143,7 @@ export function computeBrainSnapshot({
   const cartFryer = computeFryerLoad(paninoCart);
 
   const orderImpact = [
-    station("pizzaiolo", "Pizzaiolo", cart.reduce((total, item) => total + pizzaPrepWeight(item.pizza_name), 0) + paninoCart.filter((item) => item.product_key === "panino").length * 1.5, 4, "Impact du panier"),
+    station("pizzaiolo", "Pizzaiolo", cart.reduce((total, item) => total + pizzaPrepWeight(item.pizza_name), 0) + paninoCart.filter((item) => item.product_key === "panino").length * 1.5, pizzaioloCapacity, "Impact du panier"),
     station("four", "Four", cart.length + paninoCart.filter((item) => item.product_key === "panino").length, Math.max(1, settings.oven_capacity), "Impact du panier"),
     station("finition", "Finition", cart.reduce((total, item) => total + pizzaFinishWeight(item.pizza_name), 0), 4, "Impact du panier"),
     station("panino", "Pani'NO", paninoCart.filter((item) => item.product_key !== "cornet_frites").length, 2, "Impact du panier"),
@@ -234,6 +239,17 @@ function levelFromRatio(ratio: number): WorkloadLevel {
   if (ratio >= 0.85) return "tendu";
   if (ratio >= 0.35) return "actif";
   return "calme";
+}
+
+function computePizzaioloCapacity(prepTimePerPizzaSec: number) {
+  const pace = computePizzaioloPacePercent(prepTimePerPizzaSec);
+  const capacity = BASE_PIZZAIOLO_CAPACITY * (pace / 100);
+  return Math.max(2.5, Math.min(5.5, capacity));
+}
+
+function computePizzaioloPacePercent(prepTimePerPizzaSec: number) {
+  const safePrepTime = Math.max(70, prepTimePerPizzaSec || BASE_PREP_TIME_PER_PIZZA_SEC);
+  return Math.round((BASE_PREP_TIME_PER_PIZZA_SEC / safePrepTime) * 100);
 }
 
 function pizzaPrepWeight(name: string) {
