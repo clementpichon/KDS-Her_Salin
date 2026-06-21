@@ -402,7 +402,15 @@ function Caisse() {
           </div>
           <div>
             <Label htmlFor="time">Heure demandée</Label>
-            <Input id="time" type="time" value={requestedTime} onChange={(e) => setRequestedTime(e.target.value)} className="h-11 text-base" />
+            <Input
+              id="time"
+              type="time"
+              value={requestedTime}
+              onInput={(e) => setRequestedTime(e.currentTarget.value)}
+              onChange={(e) => setRequestedTime(e.target.value)}
+              onBlur={(e) => setRequestedTime(e.currentTarget.value)}
+              className="h-11 text-base"
+            />
             {isTimeInPast(requestedTime) && (
               <p className="mt-1 text-xs text-orange-600 dark:text-orange-400">
                 ⚠ Heure passée — la commande restera à la date d'aujourd'hui
