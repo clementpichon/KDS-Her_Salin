@@ -1,0 +1,5 @@
+# Her Salin
+
+> Système interne de gestion de production pour pizzeria : prise de commande, préparation, four et suivi du stock de pâtons.
+
+Cette application est un outil opérateur destiné au personnel de la pizzeria. Aucune page n'est destinée à un visiteur externe ou indexable par un moteur de recherche.
