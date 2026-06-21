@@ -216,6 +216,7 @@ function Pizzaiolo() {
             {ordersAt.map((job) => {
               const mins = minutesUntil(job.prep_start_time ?? job.requested_time);
               const urgent = mins <= 2;
+              const canStart = mins <= 0;
               const focused = focusedIds.has(job.id);
               const paninos = job.paninos;
               const breadCount = paninos.filter((p) => p.product_key === "panino").length;
@@ -342,21 +343,21 @@ function Pizzaiolo() {
                         {pizzasPending && (
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pizzas`, pizzaOrderIds, []); }}
-                            disabled={busyIds.has(`${job.id}-pizzas`)}
+                            disabled={!canStart || busyIds.has(`${job.id}-pizzas`)}
                             className="w-full h-12 text-base font-bold bg-status-oven hover:bg-status-oven/90"
                           >
                             <Flame className="mr-2 h-5 w-5" />
-                            {busyIds.has(`${job.id}-pizzas`) ? "Envoi…" : `Pizzas au four (${done}/${total})`}
+                            {!canStart ? `À lancer dans ${mins} min` : busyIds.has(`${job.id}-pizzas`) ? "Envoi…" : `Pizzas au four (${done}/${total})`}
                           </Button>
                         )}
                         {painsPending && (
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pains`, [], breadOrderIds); }}
-                            disabled={busyIds.has(`${job.id}-pains`)}
+                            disabled={!canStart || busyIds.has(`${job.id}-pains`)}
                             className="w-full h-12 text-base font-bold bg-primary hover:bg-primary/90"
                           >
                             <Sandwich className="mr-2 h-5 w-5" />
-                            {busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
+                            {!canStart ? `Pain${breadCount > 1 ? "s" : ""} à lancer dans ${mins} min` : busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
                           </Button>
                         )}
                       </div>

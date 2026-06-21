@@ -908,12 +908,17 @@ function isValidLocalTime(t: string): boolean {
   return /^\d{2}:\d{2}$/.test(t);
 }
 function parseLocalTime(t: string): Date {
-  // Règle BLOC 5 : la date est TOUJOURS celle du jour de saisie.
-  // Si l'heure saisie est dans le passé, on garde la date courante
-  // (la commande sera simplement affichée comme "En retard").
   const [hh, mm] = t.split(":").map(Number);
   const d = new Date();
   d.setHours(hh, mm, 0, 0);
+
+  // Service du soir : une commande prise en soirée pour 00:15, 00:45 ou 01:00
+  // correspond au lendemain, pas au matin déjà passé.
+  const now = new Date();
+  if (now.getHours() >= 12 && hh < 6 && d.getTime() < now.getTime()) {
+    d.setDate(d.getDate() + 1);
+  }
+
   return d;
 }
 function isTimeInPast(t: string): boolean {
