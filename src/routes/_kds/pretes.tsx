@@ -24,10 +24,11 @@ export const Route = createFileRoute("/_kds/pretes")({
 });
 
 function Pretes() {
-  const { orders } = useOrders();
+  const { orders, reload: reloadOrders } = useOrders();
   const { items: paninoItems } = usePaninoOrderItems();
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [deliveredIds, setDeliveredIds] = useState<Set<string>>(new Set());
 
   const toggleFocus = (id: string) => {
     setFocusedIds((prev) => {
@@ -51,6 +52,7 @@ function Pretes() {
   const list = orders
     .filter((o) => {
       if (o.status === "delivered") return false;
+      if (deliveredIds.has(o.id)) return false;
       const paninos = paninoByOrder.get(o.id) ?? [];
       const hasPizzas = (o.items?.length ?? 0) > 0;
       const hasPaninos = paninos.length > 0;
@@ -60,7 +62,7 @@ function Pretes() {
       return pizzasReady && paninosDone;
     })
     .sort((a, b) => a.requested_time.localeCompare(b.requested_time));
-  const activeOrders = orders.filter((o) => o.status !== "delivered");
+  const activeOrders = orders.filter((o) => o.status !== "delivered" && !deliveredIds.has(o.id));
   const lateReadyCount = list.filter((o) => isLate(o.requested_time)).length;
 
   const deliver = async (id: string) => {
@@ -70,6 +72,15 @@ function Pretes() {
     if (error) {
       console.error(error);
       toast.error("Impossible de remettre la commande");
+    } else {
+      setDeliveredIds((prev) => new Set(prev).add(id));
+      setFocusedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      toast.success("Commande remise");
+      await reloadOrders();
     }
     setBusyIds((prev) => {
       const next = new Set(prev);
