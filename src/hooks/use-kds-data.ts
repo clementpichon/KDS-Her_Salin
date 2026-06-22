@@ -15,6 +15,10 @@ const DEFAULT_SETTINGS: Settings = {
   system_mode: "test",
 };
 
+function uniqueChannelName(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function usePizzas() {
   const [pizzas, setPizzas] = useState<Pizza[]>([]);
   useEffect(() => {
@@ -59,7 +63,7 @@ export function useSettings() {
     load();
 
     const channel = supabase
-      .channel("settings-changes")
+      .channel(uniqueChannelName("settings-changes"))
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "settings" },
@@ -97,7 +101,7 @@ export function useOrders() {
   useEffect(() => {
     reload();
     const channel = supabase
-      .channel("orders-realtime")
+      .channel(uniqueChannelName("orders-realtime"))
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "orders" },
@@ -132,7 +136,7 @@ export function useIngredients() {
   useEffect(() => {
     reload();
     const channel = supabase
-      .channel("ingredients-changes")
+      .channel(uniqueChannelName("ingredients-changes"))
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "ingredients" },
@@ -163,7 +167,7 @@ export function usePaninoCatalog() {
   useEffect(() => {
     reload();
     const ch = supabase
-      .channel("panino-catalog")
+      .channel(uniqueChannelName("panino-catalog"))
       .on("postgres_changes", { event: "*", schema: "public", table: "panino_products" }, () => reload())
       .on("postgres_changes", { event: "*", schema: "public", table: "panino_options" }, () => reload())
       .subscribe();
@@ -187,7 +191,7 @@ export function usePaninoOrderItems() {
   useEffect(() => {
     reload();
     const ch = supabase
-      .channel("panino-items")
+      .channel(uniqueChannelName("panino-items"))
       .on("postgres_changes", { event: "*", schema: "public", table: "panino_order_items" }, () => reload())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
