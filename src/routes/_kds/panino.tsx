@@ -89,6 +89,25 @@ function PaninoKds() {
     return out.sort((a, b) => a.requested_time.localeCompare(b.requested_time));
   }, [items, ordersById]);
 
+  const maybeRecordOrderReady = (orderId: string, doneItemIds: Set<string>) => {
+    const order = ordersById.get(orderId);
+    const orderPaninos = items.filter((item) => item.order_id === orderId);
+    const allPaninosDone =
+      orderPaninos.length > 0 &&
+      orderPaninos.every((item) => item.status === "done" || doneItemIds.has(item.id));
+    const hasPizzas = (order?.items?.length ?? 0) > 0;
+    const pizzasReady = !hasPizzas || order?.status === "ready";
+    if (!allPaninosDone || !pizzasReady) return;
+
+    void logProductionEvent({
+      settings,
+      eventType: "ORDER_READY",
+      station: "panino",
+      orderId,
+      productType: "order",
+      metadata: { source: "panino_completion" },
+    });
+  };
 
   const setItemStatus = async (id: string, status: PaninoStatus) => {
     const item = items.find((candidate) => candidate.id === id);
@@ -98,6 +117,7 @@ function PaninoKds() {
       .eq("id", id);
     if (!error && item) {
       recordPaninoEvent(item, status, settings);
+      if (status === "done") maybeRecordOrderReady(item.order_id, new Set([id]));
     }
   };
 
@@ -108,6 +128,9 @@ function PaninoKds() {
       .in("id", group.items.map((i) => i.id));
     if (!error) {
       group.items.forEach((item) => recordPaninoEvent(item, status, settings));
+      if (status === "done") {
+        maybeRecordOrderReady(group.order_id, new Set(group.items.map((item) => item.id)));
+      }
     }
   };
 

@@ -33,6 +33,7 @@ function Four() {
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const isLearningMode = settings?.system_mode === "learning";
 
   const breadCountByOrder = useMemo(() => {
     const m = new Map<string, number>();
@@ -74,17 +75,61 @@ function Four() {
 
   const markReady = async (id: string) => {
     if (busyIds.has(id)) return;
+    const order = list.find((candidate) => candidate.id === id);
+    const pizzaItems = order?.items ?? [];
+    const unfinishedPizzaItems = pizzaItems.filter((item) => !item.prepared);
+    if (isLearningMode && unfinishedPizzaItems.length > 0) {
+      toast.warning("Mode apprentissage : terminez chaque pizza une par une avant de valider la commande.");
+      return;
+    }
+
     setBusyIds((prev) => new Set(prev).add(id));
+    if (!isLearningMode && unfinishedPizzaItems.length > 0) {
+      const { error: itemsError } = await supabase
+        .from("order_items")
+        .update({ prepared: true })
+        .in("id", unfinishedPizzaItems.map((item) => item.id));
+      if (itemsError) {
+        toast.error("Impossible de finaliser toutes les pizzas");
+        setBusyIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        return;
+      }
+      void Promise.all(
+        unfinishedPizzaItems.map((item) =>
+          logProductionEvent({
+            settings,
+            eventType: "PIZZA_FINISHED",
+            station: "four",
+            orderId: item.order_id,
+            orderItemId: item.id,
+            productType: "pizza",
+            productName: item.pizza_name,
+            metadata: { source: "bulk_ready" },
+          }),
+        ),
+      );
+    }
+
     const { error } = await supabase.from("orders").update({ status: "ready" }).eq("id", id);
     if (error) toast.error("Impossible de passer les pizzas en prêtes");
     else {
-      void logProductionEvent({
-        settings,
-        eventType: "ORDER_READY",
-        station: "four",
-        orderId: id,
-        productType: "pizza",
-      });
+      const orderPaninos = paninoItems.filter((item) => item.order_id === id);
+      const allPaninosDone = orderPaninos.every((item) => item.status === "done");
+      if (allPaninosDone) {
+        void logProductionEvent({
+          settings,
+          eventType: "ORDER_READY",
+          station: "four",
+          orderId: id,
+          productType: "order",
+        });
+      } else {
+        toast.success("Pizzas prêtes — attente du poste Pani'NO");
+      }
     }
     setBusyIds((prev) => {
       const next = new Set(prev);
@@ -170,6 +215,9 @@ function Four() {
           const painsToCook = breadCount > 0 && o.pains_panino_status === "en_cours";
           const pizzasBusy = busyIds.has(o.id);
           const painsBusy = busyIds.has(`pains-${o.id}`);
+          const pizzaDoneCount = (o.items ?? []).filter((item) => item.prepared).length;
+          const pizzaTotalCount = o.items?.length ?? 0;
+          const pizzaLearningBlocked = isLearningMode && pizzasInOven && pizzaDoneCount < pizzaTotalCount;
           return (
             <article
               key={o.id}
@@ -257,8 +305,8 @@ function Four() {
                   </Button>
                 )}
                 {hasPizzas && pizzasInOven && (
-                  <Button onClick={(e) => { e.stopPropagation(); markReady(o.id); }} disabled={pizzasBusy} className="w-full h-12 text-base font-bold bg-status-ready hover:bg-status-ready/90">
-                    <PackageCheck className="mr-2 h-5 w-5" /> {pizzasBusy ? "Validation…" : "Pizzas prêtes"}
+                  <Button onClick={(e) => { e.stopPropagation(); markReady(o.id); }} disabled={pizzasBusy || pizzaLearningBlocked} className="w-full h-12 text-base font-bold bg-status-ready hover:bg-status-ready/90">
+                    <PackageCheck className="mr-2 h-5 w-5" /> {pizzasBusy ? "Validation…" : pizzaLearningBlocked ? `Terminez les pizzas (${pizzaDoneCount}/${pizzaTotalCount})` : "Pizzas prêtes"}
                   </Button>
                 )}
               </div>

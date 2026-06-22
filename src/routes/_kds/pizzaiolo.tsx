@@ -42,6 +42,7 @@ function Pizzaiolo() {
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const isLearningMode = settings?.system_mode === "learning";
 
   const paninoByOrder = useMemo(() => {
     const m = new Map<string, PaninoOrderItem[]>();
@@ -116,6 +117,19 @@ function Pizzaiolo() {
   const sendToOven = async (jobId: string, pizzaOrderIds: string[], breadOrderIds: string[]) => {
     if (busyIds.has(jobId)) return;
     setBusyIds((prev) => new Set(prev).add(jobId));
+    const selectedPizzaItems = list
+      .flatMap((job) => job.items)
+      .filter((item) => pizzaOrderIds.includes(item.order_id));
+    if (isLearningMode && selectedPizzaItems.some((item) => !item.prepared)) {
+      toast.warning("Mode apprentissage : cochez chaque pizza préparée avant l'envoi au four.");
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+      return;
+    }
+
     const updates = [];
     if (pizzaOrderIds.length > 0) {
       updates.push(supabase.from("orders").update({ status: "in_oven" }).in("id", pizzaOrderIds));
@@ -137,9 +151,6 @@ function Pizzaiolo() {
     if (results.some((result) => result.error)) {
       toast.error("Impossible d'envoyer toute la commande au four");
     } else {
-      const selectedPizzaItems = list
-        .flatMap((job) => job.items)
-        .filter((item) => pizzaOrderIds.includes(item.order_id));
       void Promise.all([
         ...selectedPizzaItems.map((item) =>
           logProductionEvent({
@@ -383,6 +394,7 @@ function Pizzaiolo() {
                     const done = job.items.filter((i) => i.prepared).length;
                     const pizzasPending = pizzaOrderIds.length > 0;
                     const painsPending = breadOrderIds.length > 0;
+                    const pizzaLearningBlocked = isLearningMode && pizzasPending && done < total;
                     if (!pizzasPending && !painsPending) {
                       return (
                         <div className="rounded-md bg-status-ready/10 px-3 py-2 text-center text-xs font-semibold uppercase text-status-ready">
@@ -395,11 +407,17 @@ function Pizzaiolo() {
                         {pizzasPending && (
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pizzas`, pizzaOrderIds, []); }}
-                            disabled={!canStart || busyIds.has(`${job.id}-pizzas`)}
+                            disabled={!canStart || busyIds.has(`${job.id}-pizzas`) || pizzaLearningBlocked}
                             className={`w-full h-12 text-base font-bold ${canStart ? "bg-status-oven hover:bg-status-oven/90" : "bg-muted text-muted-foreground hover:bg-muted"}`}
                           >
                             <Flame className="mr-2 h-5 w-5" />
-                            {!canStart ? `À lancer dans ${mins} min` : busyIds.has(`${job.id}-pizzas`) ? "Envoi…" : `Pizzas au four (${done}/${total})`}
+                            {!canStart
+                              ? `À lancer dans ${mins} min`
+                              : busyIds.has(`${job.id}-pizzas`)
+                                ? "Envoi…"
+                                : pizzaLearningBlocked
+                                  ? `Cochez les pizzas (${done}/${total})`
+                                  : `Pizzas au four (${done}/${total})`}
                           </Button>
                         )}
                         {painsPending && (
