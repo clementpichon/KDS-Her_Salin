@@ -38,5 +38,7 @@ export async function logProductionEvent({
 
   if (error) {
     console.warn("[KDS] production event not recorded", eventType, error.message);
+    return false;
   }
+  return true;
 }

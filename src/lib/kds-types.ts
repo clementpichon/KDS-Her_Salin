@@ -23,6 +23,20 @@ export interface Settings {
   system_mode: SystemMode;
 }
 
+export interface ProductionEvent {
+  id: string;
+  created_at: string;
+  event_type: string;
+  station: string;
+  order_id: string | null;
+  order_item_id: string | null;
+  product_type: string | null;
+  product_name: string | null;
+  mode: SystemMode;
+  is_training_data: boolean;
+  metadata: Record<string, unknown> | null;
+}
+
 export interface OrderItem {
   id: string;
   order_id: string;
@@ -123,4 +137,3 @@ export interface DraftPaninoItem {
   removed: string[];
   extras: string[];
 }
-

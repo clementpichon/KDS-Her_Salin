@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Activity, AlertTriangle, BrainCircuit, Clock, ShoppingCart } from "lucide-react";
 import { useMemo } from "react";
-import { useOrders, usePaninoOrderItems, useSettings } from "@/hooks/use-kds-data";
+import { useOrders, usePaninoOrderItems, useProductionEvents, useSettings } from "@/hooks/use-kds-data";
 import { computeBrainSnapshot, type StationLoad, type WorkloadLevel } from "@/lib/kds-brain";
+import { cashierActivityDetails, getCurrentCashierActivity } from "@/lib/cashier-activity";
 import { formatTime, isLate, minutesUntil } from "@/lib/scheduling";
 
 export const Route = createFileRoute("/_kds/assistant")({
@@ -21,7 +22,9 @@ export const Route = createFileRoute("/_kds/assistant")({
 function AssistantPage() {
   const { orders } = useOrders();
   const { items: paninoItems } = usePaninoOrderItems();
+  const { events } = useProductionEvents(120);
   const settings = useSettings();
+  const cashierActivity = useMemo(() => getCurrentCashierActivity(events), [events]);
 
   const paninoByOrder = useMemo(() => {
     const map = new Map<string, typeof paninoItems>();
@@ -54,6 +57,8 @@ function AssistantPage() {
       paninoCart: [],
       readyOrders: readyOrders.length,
       urgentCashierCount,
+      cashierActivityLoad: cashierActivity?.load ?? 0,
+      cashierActivityDetails: cashierActivity ? cashierActivityDetails(cashierActivity) : undefined,
     })
     : null;
 
@@ -127,6 +132,12 @@ function AssistantPage() {
             <Metric label="Commandes prêtes" value={readyOrders.length} />
             <Metric label="À surveiller caisse" value={urgentCashierCount} />
             <Metric label="Produits Pani'NO actifs" value={paninoItems.filter((item) => item.status !== "done").length} />
+          </div>
+          <div className="mt-3 rounded-xl border bg-background p-4">
+            <div className="text-xs font-bold uppercase text-muted-foreground">Activité caisse</div>
+            <div className={`mt-1 text-lg font-black ${cashierActivity ? "text-status-prepare" : "text-secondary"}`}>
+              {cashierActivityDetails(cashierActivity)}
+            </div>
           </div>
           <div className="mt-4 rounded-xl border bg-background p-4">
             <div className="font-bold">Décision rapide</div>

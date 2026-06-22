@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, PackageCheck, ShoppingCart } from "lucide-react";
+import { CashierActivityPanel } from "@/components/kds/CashierActivityPanel";
 
 type CashierView = "caisse" | "pretes";
 
@@ -51,6 +52,8 @@ export function CashierStationHeader({
           badge={readyCount}
         />
       </nav>
+
+      <CashierActivityPanel />
     </section>
   );
 }

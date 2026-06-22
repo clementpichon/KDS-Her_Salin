@@ -37,6 +37,8 @@ type ComputeBrainInput = {
   paninoCart: DraftPaninoItem[];
   readyOrders: number;
   urgentCashierCount: number;
+  cashierActivityLoad?: number;
+  cashierActivityDetails?: string;
 };
 
 const PIZZA_PREP_WEIGHTS: Record<string, number> = {
@@ -90,6 +92,8 @@ export function computeBrainSnapshot({
   paninoCart,
   readyOrders,
   urgentCashierCount,
+  cashierActivityLoad = 0,
+  cashierActivityDetails,
 }: ComputeBrainInput): BrainSnapshot {
   const activeOrders = orders.filter((order) => order.status !== "delivered");
   const activeOrderById = new Map(activeOrders.map((order) => [order.id, order]));
@@ -131,7 +135,14 @@ export function computeBrainSnapshot({
   const fishLoad =
     activePaninoItems.filter((item) => item.product_key === "fishno").length;
 
-  const cashierLoad = readyOrders * 1.5 + urgentCashierCount * 1.25 + Math.max(0, activeOrders.length - 8) * 0.25;
+  const cashierLoad =
+    cashierActivityLoad +
+    readyOrders * 1.5 +
+    urgentCashierCount * 1.25 +
+    Math.max(0, activeOrders.length - 8) * 0.25;
+  const cashierDetails = cashierActivityDetails
+    ? `${cashierActivityDetails} · remises et flux comptoir`
+    : "Remises, clients urgents, flux comptoir";
   const pizzaioloCapacity = computePizzaioloCapacity(settings.prep_time_per_pizza_sec);
   const pizzaioloDetails = `Préparation pizzas + pains Pani'NO · cadence ${computePizzaioloPacePercent(settings.prep_time_per_pizza_sec)}%`;
 
@@ -142,7 +153,7 @@ export function computeBrainSnapshot({
     station("panino", "Pani'NO", paninoLoad, 2, "Assemblage Pani'NO / Fish & NO"),
     station("friteuse_frites", "Friteuse frites", fryer.load, 6, fryer.details),
     station("friteuse_poisson", "Friteuse poisson", fishLoad, 3, "Fish & NO, jusqu'à 3 portions par bain"),
-    station("caisse", "Caisse", cashierLoad, 3, "Remises, clients urgents, flux comptoir"),
+    station("caisse", "Caisse", cashierLoad, 3, cashierDetails),
   ];
 
   const cartFryer = computeFryerLoad(paninoCart);

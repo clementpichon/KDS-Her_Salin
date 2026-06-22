@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { Order, OrderItem, Pizza, Settings, Ingredient, PaninoProduct, PaninoOption, PaninoOrderItem } from "@/lib/kds-types";
+import type { Order, OrderItem, Pizza, Settings, Ingredient, PaninoProduct, PaninoOption, PaninoOrderItem, ProductionEvent } from "@/lib/kds-types";
 
 const DEFAULT_SETTINGS: Settings = {
   id: 1,
@@ -198,4 +198,30 @@ export function usePaninoOrderItems() {
   }, []);
 
   return { items, reload };
+}
+
+export function useProductionEvents(limit = 200) {
+  const [events, setEvents] = useState<ProductionEvent[]>([]);
+
+  const reload = async () => {
+    const { data } = await supabase
+      .from("production_events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    setEvents((data as ProductionEvent[]) ?? []);
+  };
+
+  useEffect(() => {
+    reload();
+    const channel = supabase
+      .channel(uniqueChannelName("production-events"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "production_events" }, () => reload())
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [limit]);
+
+  return { events, reload };
 }
