@@ -86,6 +86,7 @@ function Reglages() {
   const [localSettings, setLocalSettings] = useLocalControlSettings();
   const [form, setForm] = useState<Partial<SettingsForm>>({});
   const [resetCode, setResetCode] = useState("");
+  const [savingSystemMode, setSavingSystemMode] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     current: "",
     next: "",
@@ -128,6 +129,42 @@ function Reglages() {
     }
     if (error) return toast.error("Erreur");
     toast.success("Réglages enregistrés");
+  };
+
+  const saveSystemMode = async (systemMode: SystemMode) => {
+    if (savingSystemMode) return;
+    if (systemMode === settings.system_mode) {
+      setForm((current) => ({ ...current, system_mode: systemMode }));
+      return;
+    }
+
+    setSavingSystemMode(true);
+    setForm((current) => ({ ...current, system_mode: systemMode }));
+
+    const { error } = await supabase
+      .from("settings")
+      .update({ system_mode: systemMode })
+      .eq("id", 1);
+
+    if (error) {
+      console.error(error);
+      setForm((current) => ({ ...current, system_mode: settings.system_mode }));
+      if (isMissingSystemModeColumn(error.message)) {
+        toast.error("Le mode système n'est pas encore disponible dans Supabase.");
+      } else {
+        toast.error("Impossible de changer le mode système");
+      }
+    } else {
+      toast.success(
+        systemMode === "learning"
+          ? "Mode apprentissage activé"
+          : systemMode === "normal"
+            ? "Mode normal activé"
+            : "Mode test activé",
+      );
+    }
+
+    setSavingSystemMode(false);
   };
 
   const resetDay = async () => {
@@ -205,7 +242,8 @@ function Reglages() {
             <div className="space-y-3">
               <SystemModeSelector
                 value={(form.system_mode ?? settings.system_mode) as SystemMode}
-                onChange={(system_mode) => setForm({ ...form, system_mode })}
+                saving={savingSystemMode}
+                onChange={(system_mode) => void saveSystemMode(system_mode)}
               />
               <ToggleRow
                 label="Service ouvert"
@@ -507,9 +545,11 @@ function ToggleRow({
 
 function SystemModeSelector({
   value,
+  saving,
   onChange,
 }: {
   value: SystemMode;
+  saving: boolean;
   onChange: (mode: SystemMode) => void;
 }) {
   const modes: Array<{ value: SystemMode; label: string; description: string }> = [
@@ -533,9 +573,12 @@ function SystemModeSelector({
   return (
     <div className="rounded-xl border bg-background p-3">
       <div className="mb-3">
-        <div className="font-semibold">Mode système</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-semibold">Mode système</div>
+          {saving && <div className="text-xs font-bold text-primary">Enregistrement...</div>}
+        </div>
         <p className="text-sm text-muted-foreground">
-          Ce mode est commun à tous les postes et détermine comment les événements sont enregistrés.
+          Ce mode est commun à tous les postes. Le changement est enregistré dès que vous touchez un mode.
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
@@ -543,6 +586,8 @@ function SystemModeSelector({
           <button
             key={mode.value}
             type="button"
+            disabled={saving}
+            aria-pressed={value === mode.value}
             onClick={() => onChange(mode.value)}
             className={`rounded-lg border p-3 text-left transition ${
               value === mode.value
