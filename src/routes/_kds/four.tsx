@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { computeStock, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
+import { logProductionEvent } from "@/lib/production-events";
 import type { PaninoOrderItem } from "@/lib/kds-types";
 
 
@@ -76,6 +77,15 @@ function Four() {
     setBusyIds((prev) => new Set(prev).add(id));
     const { error } = await supabase.from("orders").update({ status: "ready" }).eq("id", id);
     if (error) toast.error("Impossible de passer les pizzas en prêtes");
+    else {
+      void logProductionEvent({
+        settings,
+        eventType: "ORDER_READY",
+        station: "four",
+        orderId: id,
+        productType: "pizza",
+      });
+    }
     setBusyIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
@@ -87,6 +97,16 @@ function Four() {
     setBusyIds((prev) => new Set(prev).add(`pains-${id}`));
     const { error } = await supabase.from("orders").update({ pains_panino_status: "pret" }).eq("id", id);
     if (error) toast.error("Impossible de passer les pains en cuits");
+    else {
+      void logProductionEvent({
+        settings,
+        eventType: "PANINO_BREAD_FINISHED",
+        station: "four",
+        orderId: id,
+        productType: "panino_bread",
+        productName: "Pain Pani'NO",
+      });
+    }
     setBusyIds((prev) => {
       const next = new Set(prev);
       next.delete(`pains-${id}`);
@@ -94,7 +114,19 @@ function Four() {
     });
   };
   const toggleItemPrepared = async (itemId: string, prepared: boolean) => {
-    await supabase.from("order_items").update({ prepared }).eq("id", itemId);
+    const item = list.flatMap((order) => order.items ?? []).find((candidate) => candidate.id === itemId);
+    const { error } = await supabase.from("order_items").update({ prepared }).eq("id", itemId);
+    if (!error && prepared) {
+      void logProductionEvent({
+        settings,
+        eventType: "PIZZA_FINISHED",
+        station: "four",
+        orderId: item?.order_id ?? null,
+        orderItemId: itemId,
+        productType: "pizza",
+        productName: item?.pizza_name ?? null,
+      });
+    }
   };
   const loseDough = async () => {
     if (!settings) return;

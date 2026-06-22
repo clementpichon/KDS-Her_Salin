@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { computeStock, formatTime, minutesUntil, isLate } from "@/lib/scheduling";
 import { paninoDisplayName } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
+import { logProductionEvent } from "@/lib/production-events";
 import type { Order, OrderItem, PaninoOrderItem } from "@/lib/kds-types";
 
 type PizzaioloJob = {
@@ -136,6 +137,45 @@ function Pizzaiolo() {
     if (results.some((result) => result.error)) {
       toast.error("Impossible d'envoyer toute la commande au four");
     } else {
+      const selectedPizzaItems = list
+        .flatMap((job) => job.items)
+        .filter((item) => pizzaOrderIds.includes(item.order_id));
+      void Promise.all([
+        ...selectedPizzaItems.map((item) =>
+          logProductionEvent({
+            settings,
+            eventType: "PIZZA_SENT_TO_OVEN",
+            station: "pizzaiolo",
+            orderId: item.order_id,
+            orderItemId: item.id,
+            productType: "pizza",
+            productName: item.pizza_name,
+            metadata: { job_id: jobId },
+          }),
+        ),
+        ...breadOrderIds.map((orderId) =>
+          Promise.all([
+            logProductionEvent({
+              settings,
+              eventType: "PANINO_BREAD_PREP_STARTED",
+              station: "pizzaiolo",
+              orderId,
+              productType: "panino_bread",
+              productName: "Pain Pani'NO",
+              metadata: { job_id: jobId },
+            }),
+            logProductionEvent({
+              settings,
+              eventType: "PANINO_BREAD_SENT_TO_OVEN",
+              station: "pizzaiolo",
+              orderId,
+              productType: "panino_bread",
+              productName: "Pain Pani'NO",
+              metadata: { job_id: jobId },
+            }),
+          ]),
+        ),
+      ]);
       toast.success("Commande envoyée au four");
     }
     setBusyIds((prev) => {
@@ -152,7 +192,19 @@ function Pizzaiolo() {
     toast("Pâton retiré du stock");
   };
   const toggleItemPrepared = async (itemId: string, prepared: boolean) => {
-    await supabase.from("order_items").update({ prepared }).eq("id", itemId);
+    const item = list.flatMap((job) => job.items).find((candidate) => candidate.id === itemId);
+    const { error } = await supabase.from("order_items").update({ prepared }).eq("id", itemId);
+    if (!error && prepared) {
+      void logProductionEvent({
+        settings,
+        eventType: "PIZZA_PREP_STARTED",
+        station: "pizzaiolo",
+        orderId: item?.order_id ?? null,
+        orderItemId: itemId,
+        productType: "pizza",
+        productName: item?.pizza_name ?? null,
+      });
+    }
   };
 
   // Compte des pizzas par créneau horaire (affichage informatif uniquement,

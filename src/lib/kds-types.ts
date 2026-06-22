@@ -1,4 +1,5 @@
 export type OrderStatus = "to_prepare" | "in_oven" | "ready" | "delivered";
+export type SystemMode = "test" | "learning" | "normal";
 
 export interface Pizza {
   id: string;
@@ -19,6 +20,7 @@ export interface Settings {
   batch_interval_sec: number;
   initial_paton_stock: number;
   paton_losses: number;
+  system_mode: SystemMode;
 }
 
 export interface OrderItem {
@@ -44,6 +46,7 @@ export interface Order {
   updated_at: string;
   notes: string | null;
   pains_panino_status: PainsPaninoStatus | null;
+  customer_phone_hash: string | null;
   items?: OrderItem[];
 }
 
@@ -120,5 +123,4 @@ export interface DraftPaninoItem {
   removed: string[];
   extras: string[];
 }
-
 

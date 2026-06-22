@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: Settings = {
   batch_interval_sec: 40,
   initial_paton_stock: 120,
   paton_losses: 0,
+  system_mode: "test",
 };
 
 export function usePizzas() {
@@ -63,7 +64,7 @@ export function useSettings() {
         "postgres_changes",
         { event: "*", schema: "public", table: "settings" },
         (payload) => {
-          if (payload.new) setSettings(payload.new as Settings);
+          if (payload.new) setSettings({ ...DEFAULT_SETTINGS, ...(payload.new as Settings) });
         },
       )
       .subscribe();

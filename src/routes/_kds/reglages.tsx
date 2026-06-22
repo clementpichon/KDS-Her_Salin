@@ -31,7 +31,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { KDS_AUTH_KEY, resetKdsPassword, updateKdsPassword, verifyKdsCredentials } from "@/lib/kds-auth";
 import { computeStock } from "@/lib/scheduling";
-import type { Settings, Pizza, Ingredient, PaninoProduct } from "@/lib/kds-types";
+import type { Settings, Pizza, Ingredient, PaninoProduct, SystemMode } from "@/lib/kds-types";
 
 
 type SettingsForm = Omit<Settings, "id" | "paton_losses">;
@@ -102,6 +102,7 @@ function Reglages() {
         safety_margin_sec: settings.safety_margin_sec,
         batch_interval_sec: settings.batch_interval_sec,
         initial_paton_stock: settings.initial_paton_stock,
+        system_mode: settings.system_mode,
       });
   }, [settings]);
 
@@ -115,6 +116,16 @@ function Reglages() {
 
   const save = async () => {
     const { error } = await supabase.from("settings").update(form).eq("id", 1);
+    if (error && isMissingSystemModeColumn(error.message)) {
+      const legacyForm = { ...form };
+      delete legacyForm.system_mode;
+      if (Object.keys(legacyForm).length > 0) {
+        const { error: legacyError } = await supabase.from("settings").update(legacyForm).eq("id", 1);
+        if (legacyError) return toast.error("Erreur");
+      }
+      toast.warning("Réglages enregistrés, mais la migration du mode système doit être appliquée dans Supabase.");
+      return;
+    }
     if (error) return toast.error("Erreur");
     toast.success("Réglages enregistrés");
   };
@@ -192,17 +203,15 @@ function Reglages() {
           </AccordionTrigger>
           <AccordionContent>
             <div className="space-y-3">
+              <SystemModeSelector
+                value={(form.system_mode ?? settings.system_mode) as SystemMode}
+                onChange={(system_mode) => setForm({ ...form, system_mode })}
+              />
               <ToggleRow
                 label="Service ouvert"
                 description="Indicateur de pilotage pour savoir si la prise de commande doit rester active."
                 checked={localSettings.serviceOpen}
                 onCheckedChange={(serviceOpen) => setLocalSettings({ ...localSettings, serviceOpen })}
-              />
-              <ToggleRow
-                label="Mode test"
-                description="Repère visuel pour travailler avec des commandes de démonstration sans les confondre avec le service réel."
-                checked={localSettings.testMode}
-                onCheckedChange={(testMode) => setLocalSettings({ ...localSettings, testMode })}
               />
               <ToggleRow
                 label="Verrouiller les postes"
@@ -212,7 +221,6 @@ function Reglages() {
               />
               <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${localSettings.serviceOpen ? "border-secondary/40 bg-secondary/10 text-secondary" : "border-destructive/40 bg-destructive/10 text-destructive"}`}>
                 {localSettings.serviceOpen ? "Service marqué ouvert" : "Service marqué fermé"}
-                {localSettings.testMode && <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">TEST</span>}
               </div>
             </div>
           </AccordionContent>
@@ -471,6 +479,10 @@ function useLocalControlSettings(): [
   return [settings, setSettings];
 }
 
+function isMissingSystemModeColumn(message: string) {
+  return message.includes("system_mode") || message.includes("column");
+}
+
 function ToggleRow({
   label,
   description,
@@ -489,6 +501,60 @@ function ToggleRow({
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+function SystemModeSelector({
+  value,
+  onChange,
+}: {
+  value: SystemMode;
+  onChange: (mode: SystemMode) => void;
+}) {
+  const modes: Array<{ value: SystemMode; label: string; description: string }> = [
+    {
+      value: "test",
+      label: "Test",
+      description: "Les événements sont marqués test et exclus des données d'apprentissage.",
+    },
+    {
+      value: "learning",
+      label: "Apprentissage",
+      description: "Le KDS collecte les données réelles pour entraîner les futures prédictions.",
+    },
+    {
+      value: "normal",
+      label: "Normal / IA",
+      description: "Mode service simplifié, prêt pour les recommandations une fois les données mûres.",
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border bg-background p-3">
+      <div className="mb-3">
+        <div className="font-semibold">Mode système</div>
+        <p className="text-sm text-muted-foreground">
+          Ce mode est commun à tous les postes et détermine comment les événements sont enregistrés.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {modes.map((mode) => (
+          <button
+            key={mode.value}
+            type="button"
+            onClick={() => onChange(mode.value)}
+            className={`rounded-lg border p-3 text-left transition ${
+              value === mode.value
+                ? "border-primary bg-primary/10 text-primary"
+                : "bg-card hover:border-primary/50"
+            }`}
+          >
+            <div className="font-black">{mode.label}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{mode.description}</div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -90,6 +90,7 @@ export type Database = {
         Row: {
           created_at: string
           customer_name: string
+          customer_phone_hash: string | null
           id: string
           notes: string | null
           pains_panino_status: string | null
@@ -101,6 +102,7 @@ export type Database = {
         Insert: {
           created_at?: string
           customer_name: string
+          customer_phone_hash?: string | null
           id?: string
           notes?: string | null
           pains_panino_status?: string | null
@@ -112,6 +114,7 @@ export type Database = {
         Update: {
           created_at?: string
           customer_name?: string
+          customer_phone_hash?: string | null
           id?: string
           notes?: string | null
           pains_panino_status?: string | null
@@ -274,6 +277,7 @@ export type Database = {
           paton_losses: number
           prep_time_per_pizza_sec: number
           safety_margin_sec: number
+          system_mode: string
           updated_at: string
         }
         Insert: {
@@ -286,6 +290,7 @@ export type Database = {
           paton_losses?: number
           prep_time_per_pizza_sec?: number
           safety_margin_sec?: number
+          system_mode?: string
           updated_at?: string
         }
         Update: {
@@ -298,7 +303,91 @@ export type Database = {
           paton_losses?: number
           prep_time_per_pizza_sec?: number
           safety_margin_sec?: number
+          system_mode?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      production_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          is_training_data: boolean
+          metadata: Json
+          mode: string
+          order_id: string | null
+          order_item_id: string | null
+          product_name: string | null
+          product_type: string | null
+          station: string
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          is_training_data?: boolean
+          metadata?: Json
+          mode?: string
+          order_id?: string | null
+          order_item_id?: string | null
+          product_name?: string | null
+          product_type?: string | null
+          station: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          is_training_data?: boolean
+          metadata?: Json
+          mode?: string
+          order_id?: string | null
+          order_item_id?: string | null
+          product_name?: string | null
+          product_type?: string | null
+          station?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_events_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      phone_events: {
+        Row: {
+          call_duration_seconds: number | null
+          call_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          is_training_data: boolean
+          mode: string
+          phone_number_hash: string | null
+        }
+        Insert: {
+          call_duration_seconds?: number | null
+          call_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          is_training_data?: boolean
+          mode?: string
+          phone_number_hash?: string | null
+        }
+        Update: {
+          call_duration_seconds?: number | null
+          call_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          is_training_data?: boolean
+          mode?: string
+          phone_number_hash?: string | null
         }
         Relationships: []
       }

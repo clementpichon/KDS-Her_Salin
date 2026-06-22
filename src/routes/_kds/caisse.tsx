@@ -37,6 +37,7 @@ import {
 } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
+import { logProductionEvent } from "@/lib/production-events";
 import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
 
 const LOCAL_CONTROL_KEY = "hersalin_control_settings_v1";
@@ -272,6 +273,20 @@ function Caisse() {
         const { error: paninoError } = await supabase.from("panino_order_items").insert(pItems);
         if (paninoError) throw paninoError;
       }
+
+      void logProductionEvent({
+        settings,
+        eventType: "ORDER_CREATED",
+        station: "caisse",
+        orderId: order.id,
+        metadata: {
+          requested_time: reqDate.toISOString(),
+          pizza_count: cart.length,
+          panino_count: paninoCart.filter((item) => item.product_key === "panino").length,
+          fish_count: paninoCart.filter((item) => item.product_key === "fishno").length,
+          fries_count: paninoCart.filter((item) => item.product_key === "cornet_frites").length,
+        },
+      });
 
       toast.success(`Commande ${customerName} validée pour ${formatTime(reqDate)}`);
       setCart([]);

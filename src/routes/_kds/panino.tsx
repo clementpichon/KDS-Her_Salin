@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { computeStock, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
+import { logProductionEvent } from "@/lib/production-events";
 import type { Order, PaninoOrderItem, PaninoStatus } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/panino")({
@@ -90,17 +91,24 @@ function PaninoKds() {
 
 
   const setItemStatus = async (id: string, status: PaninoStatus) => {
-    await supabase
+    const item = items.find((candidate) => candidate.id === id);
+    const { error } = await supabase
       .from("panino_order_items")
       .update({ status, done_at: status === "done" ? new Date().toISOString() : null })
       .eq("id", id);
+    if (!error && item) {
+      recordPaninoEvent(item, status, settings);
+    }
   };
 
   const setGroupStatus = async (group: Group, status: PaninoStatus) => {
-    await supabase
+    const { error } = await supabase
       .from("panino_order_items")
       .update({ status, done_at: status === "done" ? new Date().toISOString() : null })
       .in("id", group.items.map((i) => i.id));
+    if (!error) {
+      group.items.forEach((item) => recordPaninoEvent(item, status, settings));
+    }
   };
 
   const counts = {
@@ -156,6 +164,48 @@ function PaninoKds() {
       })()}
     </div>
   );
+}
+
+function recordPaninoEvent(
+  item: PaninoOrderItem,
+  status: PaninoStatus,
+  settings: ReturnType<typeof useSettings>,
+) {
+  const eventTypes = eventTypesForPaninoItem(item, status);
+  if (eventTypes.length === 0) return;
+
+  void Promise.all(
+    eventTypes.map((eventType) =>
+      logProductionEvent({
+        settings,
+        eventType,
+        station: "panino",
+        orderId: item.order_id,
+        orderItemId: item.id,
+        productType: item.product_key,
+        productName: item.product_name,
+        metadata: {
+          fries_mode: item.fries_mode,
+          side: item.side,
+          sauces: item.sauces,
+        },
+      }),
+    ),
+  );
+}
+
+function eventTypesForPaninoItem(item: PaninoOrderItem, status: PaninoStatus) {
+  if (status === "pending") return [];
+  if (item.product_key === "panino") {
+    return status === "done" ? ["PANINO_FINISHED"] : ["PANINO_PREP_STARTED", "PANINO_STEAK_STARTED"];
+  }
+  if (item.product_key === "fishno") {
+    return status === "done" ? ["FISH_FINISHED"] : ["FISH_STARTED"];
+  }
+  if (item.product_key === "cornet_frites") {
+    return status === "done" ? ["FRIES_FINISHED"] : ["FRIES_STARTED"];
+  }
+  return status === "done" ? ["PANINO_FINISHED"] : ["PANINO_PREP_STARTED"];
 }
 
 function GroupCard({

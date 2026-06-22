@@ -20,6 +20,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { KDS_AUTH_KEY, verifyKdsCredentials } from "@/lib/kds-auth";
+import { useSettings } from "@/hooks/use-kds-data";
+import type { SystemMode } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds")({
   component: KdsLayout,
@@ -99,6 +101,13 @@ function KdsLayout() {
     setAuthed(false);
   };
 
+  return <AuthenticatedKdsLayout logout={logout} />;
+}
+
+function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
+  const settings = useSettings();
+  const mode = settings?.system_mode ?? "test";
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
       <FullscreenPrompt />
@@ -110,6 +119,7 @@ function KdsLayout() {
             </span>
             <span>Her Salin</span>
           </Link>
+          <SystemModeBadge mode={mode} />
           <DesktopNav logout={logout} />
           <MobileNav logout={logout} />
         </div>
@@ -118,6 +128,23 @@ function KdsLayout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function SystemModeBadge({ mode }: { mode: SystemMode }) {
+  const label =
+    mode === "learning" ? "MODE APPRENTISSAGE" : mode === "normal" ? "MODE NORMAL" : "MODE TEST";
+  const className =
+    mode === "learning"
+      ? "border-blue-300 bg-blue-50 text-blue-700"
+      : mode === "normal"
+        ? "border-secondary/40 bg-secondary/10 text-secondary"
+        : "border-primary/40 bg-primary/10 text-primary";
+
+  return (
+    <span className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black tracking-wide sm:px-2.5 sm:text-[10px] ${className}`}>
+      {label}
+    </span>
   );
 }
 
