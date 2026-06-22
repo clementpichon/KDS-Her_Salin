@@ -37,6 +37,18 @@ export interface ProductionEvent {
   metadata: Record<string, unknown> | null;
 }
 
+export interface PhoneStatus {
+  id: number;
+  is_ringing: boolean;
+  is_on_call: boolean;
+  current_phone_number: string | null;
+  device_id: string | null;
+  call_started_at: string | null;
+  matched_order_id: string | null;
+  matched_customer_name: string | null;
+  updated_at: string;
+}
+
 export interface OrderItem {
   id: string;
   order_id: string;
@@ -61,6 +73,7 @@ export interface Order {
   notes: string | null;
   pains_panino_status: PainsPaninoStatus | null;
   customer_phone_hash: string | null;
+  customer_phone: string | null;
   items?: OrderItem[];
 }
 

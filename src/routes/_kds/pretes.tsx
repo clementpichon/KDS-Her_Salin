@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PackageCheck, Clock, User, HandCoins, Eye, EyeOff, Sandwich } from "lucide-react";
+import { Copy, PackageCheck, Clock, User, HandCoins, Eye, EyeOff, Sandwich, PhoneCall } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useOrders, usePaninoOrderItems } from "@/hooks/use-kds-data";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CashierStationHeader } from "@/components/kds/CashierStationHeader";
 import { formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
+import { formatPhoneNumber } from "@/lib/phone-utils";
 import type { PaninoOrderItem } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pretes")({
@@ -128,6 +129,32 @@ function Pretes() {
                 <div>
                   <div className="flex items-center gap-2 text-xl font-bold"><User className="h-5 w-5" /> {o.customer_name}</div>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground"><Clock className="h-4 w-4" />{formatTime(o.requested_time)}{isLate(o.requested_time) && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-400">En retard</span>}</div>
+                  {o.customer_phone && (
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <a
+                        href={`tel:${o.customer_phone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 font-bold text-primary"
+                      >
+                        <PhoneCall className="h-3 w-3" /> Rappeler {formatPhoneNumber(o.customer_phone)}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await navigator.clipboard.writeText(o.customer_phone ?? "");
+                            toast.success("Numéro copié");
+                          } catch {
+                            toast.error("Impossible de copier le numéro");
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 font-bold text-muted-foreground"
+                      >
+                        <Copy className="h-3 w-3" /> Copier
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button

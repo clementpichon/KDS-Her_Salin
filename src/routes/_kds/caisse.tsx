@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
@@ -16,8 +16,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Copy,
+  PhoneCall,
 } from "lucide-react";
-import { usePizzas, useOrders, useSettings, useIngredients, usePaninoCatalog, usePaninoOrderItems } from "@/hooks/use-kds-data";
+import { usePizzas, useOrders, useSettings, useIngredients, usePaninoCatalog, usePaninoOrderItems, usePhoneStatus } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +38,7 @@ import {
   type PizzaCapacityResult,
 } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
+import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
 import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
@@ -59,10 +62,12 @@ function Caisse() {
   const pizzas = usePizzas();
   const { orders, reload } = useOrders();
   const settings = useSettings();
+  const { status: phoneStatus } = usePhoneStatus();
   const { products: paninoProducts, options: paninoOptions } = usePaninoCatalog();
   const { items: paninoItems, reload: reloadPanino } = usePaninoOrderItems();
 
   const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [requestedTime, setRequestedTime] = useState(defaultTime());
   const [cart, setCart] = useState<DraftItem[]>([]);
   const [paninoCart, setPaninoCart] = useState<DraftPaninoItem[]>([]);
@@ -77,6 +82,12 @@ function Caisse() {
   const [showTodayOrders, setShowTodayOrders] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const runOcr = useServerFn(scanOrderTicket);
+
+  useEffect(() => {
+    const incomingPhone = phoneStatus?.current_phone_number;
+    if (!incomingPhone || customerPhone.trim()) return;
+    setCustomerPhone(incomingPhone);
+  }, [phoneStatus?.current_phone_number, customerPhone]);
 
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const pendingPaninoDoughs = paninoCart.filter((p) => p.product_key === "panino").length;
@@ -230,10 +241,12 @@ function Caisse() {
       const reqDate = parseLocalTime(requestedTime);
       const prepStart = cart.length > 0 ? computePrepStart(reqDate, cart.length, settings) : null;
       const breadCount = paninoCart.filter((p) => p.product_key === "panino").length;
+      const normalizedCustomerPhone = normalizePhoneNumber(customerPhone);
       const { data: order, error } = await supabase
         .from("orders")
         .insert({
           customer_name: customerName.trim(),
+          customer_phone: normalizedCustomerPhone || null,
           requested_time: reqDate.toISOString(),
           prep_start_time: prepStart ? prepStart.toISOString() : null,
           notes: orderNotes.trim() || null,
@@ -292,6 +305,7 @@ function Caisse() {
       setCart([]);
       setPaninoCart([]);
       setCustomerName("");
+      setCustomerPhone("");
       setOrderNotes("");
       setRequestedTime(defaultTime());
       reload();
@@ -414,6 +428,34 @@ function Caisse() {
           <div>
             <Label htmlFor="cust">Nom du client</Label>
             <Input id="cust" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Ex : Martin" className="h-11 text-base" />
+          </div>
+          <div>
+            <Label htmlFor="phone">Téléphone (optionnel)</Label>
+            <div className="flex gap-2">
+              <Input
+                id="phone"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                placeholder="Ex : 06 12 34 56 78"
+                inputMode="tel"
+                className="h-11 text-base"
+              />
+              {phoneStatus?.current_phone_number && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 shrink-0"
+                  onClick={() => setCustomerPhone(phoneStatus.current_phone_number ?? "")}
+                >
+                  <PhoneCall className="mr-1 h-4 w-4" /> Appel
+                </Button>
+              )}
+            </div>
+            {customerPhone && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Enregistré comme {formatPhoneNumber(customerPhone)}
+              </p>
+            )}
           </div>
           <div>
             <Label htmlFor="time">Heure demandée</Label>
@@ -578,6 +620,32 @@ function Caisse() {
                           {o.items && o.items.length > 0 && ` · ${o.items.length} pizza${o.items.length > 1 ? "s" : ""}`}
                           {oPaninos.length > 0 && ` · ${oPaninos.length} Pani'NO`}
                         </div>
+                        {o.customer_phone && (
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                            <a
+                              href={`tel:${o.customer_phone}`}
+                              onClick={(event) => event.stopPropagation()}
+                              className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 font-bold text-primary"
+                            >
+                              <PhoneCall className="h-3 w-3" /> Rappeler {formatPhoneNumber(o.customer_phone)}
+                            </a>
+                            <button
+                              type="button"
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                try {
+                                  await navigator.clipboard.writeText(o.customer_phone ?? "");
+                                  toast.success("Numéro copié");
+                                } catch {
+                                  toast.error("Impossible de copier le numéro");
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 font-bold text-muted-foreground"
+                            >
+                              <Copy className="h-3 w-3" /> Copier
+                            </button>
+                          </div>
+                        )}
                         {oPaninos.length > 0 && (
                           <ul className="mt-1 space-y-0.5">
                             {oPaninos.map((p) => (

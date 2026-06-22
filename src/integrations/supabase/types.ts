@@ -90,6 +90,7 @@ export type Database = {
         Row: {
           created_at: string
           customer_name: string
+          customer_phone: string | null
           customer_phone_hash: string | null
           id: string
           notes: string | null
@@ -102,6 +103,7 @@ export type Database = {
         Insert: {
           created_at?: string
           customer_name: string
+          customer_phone?: string | null
           customer_phone_hash?: string | null
           id?: string
           notes?: string | null
@@ -114,6 +116,7 @@ export type Database = {
         Update: {
           created_at?: string
           customer_name?: string
+          customer_phone?: string | null
           customer_phone_hash?: string | null
           id?: string
           notes?: string | null
@@ -363,33 +366,100 @@ export type Database = {
           call_duration_seconds: number | null
           call_id: string | null
           created_at: string
+          device_id: string | null
+          duration_sec: number | null
           event_type: string
           id: string
           is_training_data: boolean
           mode: string
+          occurred_at: string
+          order_id: string | null
+          phone_number: string | null
           phone_number_hash: string | null
         }
         Insert: {
           call_duration_seconds?: number | null
           call_id?: string | null
           created_at?: string
+          device_id?: string | null
+          duration_sec?: number | null
           event_type: string
           id?: string
           is_training_data?: boolean
           mode?: string
+          occurred_at?: string
+          order_id?: string | null
+          phone_number?: string | null
           phone_number_hash?: string | null
         }
         Update: {
           call_duration_seconds?: number | null
           call_id?: string | null
           created_at?: string
+          device_id?: string | null
+          duration_sec?: number | null
           event_type?: string
           id?: string
           is_training_data?: boolean
           mode?: string
+          occurred_at?: string
+          order_id?: string | null
+          phone_number?: string | null
           phone_number_hash?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "phone_events_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      phone_status: {
+        Row: {
+          call_started_at: string | null
+          current_phone_number: string | null
+          device_id: string | null
+          id: number
+          is_on_call: boolean
+          is_ringing: boolean
+          matched_customer_name: string | null
+          matched_order_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          call_started_at?: string | null
+          current_phone_number?: string | null
+          device_id?: string | null
+          id?: number
+          is_on_call?: boolean
+          is_ringing?: boolean
+          matched_customer_name?: string | null
+          matched_order_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          call_started_at?: string | null
+          current_phone_number?: string | null
+          device_id?: string | null
+          id?: number
+          is_on_call?: boolean
+          is_ringing?: boolean
+          matched_customer_name?: string | null
+          matched_order_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "phone_status_matched_order_id_fkey"
+            columns: ["matched_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

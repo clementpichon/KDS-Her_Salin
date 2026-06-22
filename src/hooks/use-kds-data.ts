@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { Order, OrderItem, Pizza, Settings, Ingredient, PaninoProduct, PaninoOption, PaninoOrderItem, ProductionEvent } from "@/lib/kds-types";
+import type { Order, OrderItem, Pizza, Settings, Ingredient, PaninoProduct, PaninoOption, PaninoOrderItem, ProductionEvent, PhoneStatus } from "@/lib/kds-types";
 
 const DEFAULT_SETTINGS: Settings = {
   id: 1,
@@ -224,4 +224,35 @@ export function useProductionEvents(limit = 200) {
   }, [limit]);
 
   return { events, reload };
+}
+
+export function usePhoneStatus() {
+  const [status, setStatus] = useState<PhoneStatus | null>(null);
+
+  const reload = async () => {
+    const { data, error } = await supabase
+      .from("phone_status")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle();
+    if (error) {
+      console.warn("[KDS] Statut téléphone indisponible", error.message);
+      setStatus(null);
+      return;
+    }
+    setStatus((data as PhoneStatus | null) ?? null);
+  };
+
+  useEffect(() => {
+    reload();
+    const channel = supabase
+      .channel(uniqueChannelName("phone-status"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "phone_status" }, () => reload())
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  return { status, reload };
 }
