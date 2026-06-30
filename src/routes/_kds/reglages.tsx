@@ -86,6 +86,8 @@ function Reglages() {
   const [localSettings, setLocalSettings] = useLocalControlSettings();
   const [form, setForm] = useState<Partial<SettingsForm>>({});
   const [resetCode, setResetCode] = useState("");
+  const [resetStockBusy, setResetStockBusy] = useState(false);
+  const [resetDayBusy, setResetDayBusy] = useState(false);
   const [savingSystemMode, setSavingSystemMode] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     current: "",
@@ -167,21 +169,73 @@ function Reglages() {
     setSavingSystemMode(false);
   };
 
+  const resetPatonStock = async () => {
+    if (resetStockBusy) return;
+    if (settings.paton_losses <= 0) {
+      toast.info("Aucune perte pâton à réinitialiser");
+      return;
+    }
+    if (!window.confirm("Réinitialiser le stock pâtons en remettant les pertes à zéro ? Les commandes restent inchangées.")) return;
+
+    setResetStockBusy(true);
+    try {
+      const { error } = await supabase.from("settings").update({ paton_losses: 0 }).eq("id", 1);
+      if (error) {
+        console.error(error);
+        toast.error("Impossible de réinitialiser le stock pâtons");
+        return;
+      }
+      toast.success("Pertes pâtons remises à zéro");
+    } finally {
+      setResetStockBusy(false);
+    }
+  };
+
   const resetDay = async () => {
+    if (resetDayBusy) return;
     if (resetCode.trim().toUpperCase() !== "RESET") {
       toast.error("Tapez RESET pour confirmer la réinitialisation");
       return;
     }
-    const { data: ordersToDelete } = await supabase.from("orders").select("id");
-    const ids = (ordersToDelete ?? []).map((o) => o.id);
-    if (ids.length > 0) {
-      await supabase.from("order_items").delete().in("order_id", ids);
-      await supabase.from("panino_order_items").delete().in("order_id", ids);
-      await supabase.from("orders").delete().in("id", ids);
+
+    setResetDayBusy(true);
+    try {
+      const { data: ordersToDelete, error: ordersError } = await supabase.from("orders").select("id");
+      if (ordersError) {
+        console.error(ordersError);
+        toast.error("Impossible de lire les commandes à supprimer");
+        return;
+      }
+
+      const ids = (ordersToDelete ?? []).map((o) => o.id);
+      if (ids.length > 0) {
+        const { error: pizzaItemsError } = await supabase.from("order_items").delete().in("order_id", ids);
+        const { error: paninoItemsError } = await supabase.from("panino_order_items").delete().in("order_id", ids);
+        const { error: ordersDeleteError } = await supabase.from("orders").delete().in("id", ids);
+
+        if (pizzaItemsError || paninoItemsError || ordersDeleteError) {
+          console.error(pizzaItemsError ?? paninoItemsError ?? ordersDeleteError);
+          toast.error("Reset interrompu : certaines commandes n'ont pas été supprimées");
+          return;
+        }
+      }
+
+      const { error: settingsError } = await supabase.from("settings").update({ paton_losses: 0 }).eq("id", 1);
+      if (settingsError) {
+        console.error(settingsError);
+        toast.error("Commandes supprimées, mais le stock pâtons n'a pas pu être réinitialisé");
+        return;
+      }
+
+      setResetCode("");
+      toast.success(
+        ids.length > 0
+          ? `Journée réinitialisée — ${ids.length} commande${ids.length > 1 ? "s" : ""} supprimée${ids.length > 1 ? "s" : ""}, stock pâtons complet`
+          : "Journée réinitialisée — aucune commande à supprimer, stock pâtons complet",
+      );
+    } finally {
+      setResetDayBusy(false);
     }
-    await supabase.from("settings").update({ paton_losses: 0 }).eq("id", 1);
-    setResetCode("");
-    toast.success("Journée réinitialisée — stock pâtons complet");
   };
 
   const savePassword = () => {
@@ -289,6 +343,24 @@ function Reglages() {
                 value={localSettings.stockWarningThreshold}
                 onChange={(stockWarningThreshold) => setLocalSettings({ ...localSettings, stockWarningThreshold })}
               />
+            </div>
+            <div className="mt-4 rounded-xl border-2 border-primary/40 bg-primary/10 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-bold">Réinitialiser stock pâtons</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Remet les pertes pâtons à zéro. Les commandes en cours restent comptées dans le stock.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={resetPatonStock}
+                  disabled={resetStockBusy}
+                  className="h-12 shrink-0 text-base font-bold"
+                >
+                  <RotateCcw className="mr-1 h-4 w-4" /> Réinitialiser stock pâtons
+                </Button>
+              </div>
             </div>
           </AccordionContent>
         </AccordionItem>
@@ -472,6 +544,11 @@ function Reglages() {
                 remises, sans limite de date), les pizzas et produits Pani'NO associés, et remet
                 les pertes pâtons à zéro. Action irréversible.
               </p>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                <Stat label="Commandes à supprimer" value={orders.length} tone={orders.length > 0 ? "destructive" : "secondary"} />
+                <Stat label="Pizzas liées" value={orders.reduce((total, order) => total + (order.items?.length ?? 0), 0)} />
+                <Stat label="Pani'NO liés" value={paninoItems.length} />
+              </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
                 <Input
                   value={resetCode}
@@ -479,7 +556,12 @@ function Reglages() {
                   placeholder="Tapez RESET pour confirmer"
                   className="h-11"
                 />
-                <Button variant="destructive" onClick={resetDay} className="h-11" disabled={resetCode.trim().toUpperCase() !== "RESET"}>
+                <Button
+                  variant="destructive"
+                  onClick={resetDay}
+                  className="h-11"
+                  disabled={resetDayBusy || resetCode.trim().toUpperCase() !== "RESET"}
+                >
                   <RotateCcw className="mr-1 h-4 w-4" /> Reset journée
                 </Button>
               </div>
