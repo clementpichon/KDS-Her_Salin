@@ -140,7 +140,7 @@ export function computeStock(
 ): number {
   const usedPizzas = orders.reduce((acc, o) => acc + (o.items?.length ?? 0), 0);
   const usedPaninos = paninoItems.filter((p) => p.product_key === "panino").length;
-  return s.initial_paton_stock - usedPizzas - usedPaninos - s.paton_losses;
+  return Math.max(0, s.initial_paton_stock - usedPizzas - usedPaninos - s.paton_losses);
 }
 
 export function formatTime(d: Date | string): string {

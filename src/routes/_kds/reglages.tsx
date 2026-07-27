@@ -171,21 +171,21 @@ function Reglages() {
 
   const resetPatonStock = async () => {
     if (resetStockBusy) return;
-    if (settings.paton_losses <= 0) {
-      toast.info("Aucune perte pâton à réinitialiser");
-      return;
-    }
-    if (!window.confirm("Réinitialiser le stock pâtons en remettant les pertes à zéro ? Les commandes restent inchangées.")) return;
+    if (!window.confirm("Réinitialiser le stock pâtons à zéro ? Les commandes et le reste du KDS restent inchangés.")) return;
 
     setResetStockBusy(true);
     try {
-      const { error } = await supabase.from("settings").update({ paton_losses: 0 }).eq("id", 1);
+      const { error } = await supabase
+        .from("settings")
+        .update({ initial_paton_stock: 0, paton_losses: 0 })
+        .eq("id", 1);
       if (error) {
         console.error(error);
         toast.error("Impossible de réinitialiser le stock pâtons");
         return;
       }
-      toast.success("Pertes pâtons remises à zéro");
+      setForm((current) => ({ ...current, initial_paton_stock: 0 }));
+      toast.success("Stock pâtons réinitialisé à zéro");
     } finally {
       setResetStockBusy(false);
     }
@@ -349,7 +349,7 @@ function Reglages() {
                 <div>
                   <h3 className="font-bold">Réinitialiser stock pâtons</h3>
                   <p className="text-sm text-muted-foreground">
-                    Remet les pertes pâtons à zéro. Les commandes en cours restent comptées dans le stock.
+                    Remet le stock initial, le stock restant et les pertes à zéro sans toucher aux commandes.
                   </p>
                 </div>
                 <Button
