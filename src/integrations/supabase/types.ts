@@ -89,12 +89,14 @@ export type Database = {
       orders: {
         Row: {
           created_at: string
+          cancelled_at: string | null
           customer_name: string
           customer_phone: string | null
           customer_phone_hash: string | null
           id: string
           notes: string | null
           pains_panino_status: string | null
+          pizzaiolo_queue_position: number | null
           prep_start_time: string | null
           requested_time: string
           status: Database["public"]["Enums"]["order_status"]
@@ -102,12 +104,14 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          cancelled_at?: string | null
           customer_name: string
           customer_phone?: string | null
           customer_phone_hash?: string | null
           id?: string
           notes?: string | null
           pains_panino_status?: string | null
+          pizzaiolo_queue_position?: number | null
           prep_start_time?: string | null
           requested_time: string
           status?: Database["public"]["Enums"]["order_status"]
@@ -115,12 +119,14 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          cancelled_at?: string | null
           customer_name?: string
           customer_phone?: string | null
           customer_phone_hash?: string | null
           id?: string
           notes?: string | null
           pains_panino_status?: string | null
+          pizzaiolo_queue_position?: number | null
           prep_start_time?: string | null
           requested_time?: string
           status?: Database["public"]["Enums"]["order_status"]
@@ -472,7 +478,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      order_status: "to_prepare" | "in_oven" | "ready" | "delivered"
+      order_status: "to_prepare" | "in_oven" | "ready" | "delivered" | "cancelled"
       panino_item_status: "pending" | "in_progress" | "done"
     }
     CompositeTypes: {
@@ -601,7 +607,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      order_status: ["to_prepare", "in_oven", "ready", "delivered"],
+      order_status: ["to_prepare", "in_oven", "ready", "delivered", "cancelled"],
       panino_item_status: ["pending", "in_progress", "done"],
     },
   },

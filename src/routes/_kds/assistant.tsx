@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useOrders, usePaninoOrderItems, usePhoneStatus, useProductionEvents, useSettings } from "@/hooks/use-kds-data";
 import { computeBrainSnapshot, type StationLoad, type WorkloadLevel } from "@/lib/kds-brain";
 import { cashierActivityDetails, getCurrentCashierActivity } from "@/lib/cashier-activity";
+import { isOrderActive } from "@/lib/order-status";
 import { formatTime, isLate, minutesUntil } from "@/lib/scheduling";
 
 export const Route = createFileRoute("/_kds/assistant")({
@@ -44,7 +45,8 @@ function AssistantPage() {
     return map;
   }, [paninoItems]);
 
-  const activeOrders = orders.filter((order) => order.status !== "delivered");
+  const activeOrders = orders.filter(isOrderActive);
+  const activeOrderIds = new Set(activeOrders.map((order) => order.id));
   const readyOrders = activeOrders.filter((order) => {
     const paninos = paninoByOrder.get(order.id) ?? [];
     const hasPizzas = (order.items?.length ?? 0) > 0;
@@ -146,7 +148,7 @@ function AssistantPage() {
           <div className="grid gap-3 md:grid-cols-3">
             <Metric label="Commandes actives" value={activeOrders.length} />
             <Metric label="Commandes prêtes" value={readyOrders.length} />
-            <Metric label="Produits Pani'NO actifs" value={paninoItems.filter((item) => item.status !== "done").length} />
+            <Metric label="Produits Pani'NO actifs" value={paninoItems.filter((item) => item.status !== "done" && activeOrderIds.has(item.order_id)).length} />
           </div>
           <div className="mt-4 rounded-xl border bg-background p-4">
             <div className="font-bold">Décision rapide</div>

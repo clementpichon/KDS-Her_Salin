@@ -134,6 +134,7 @@ async function findMatchingOrder(normalizedPhone: string): Promise<MatchedOrder 
     .from("orders")
     .select("id, customer_name")
     .neq("status", "delivered")
+    .neq("status", "cancelled")
     .eq("customer_phone", normalizedPhone)
     .order("created_at", { ascending: false })
     .limit(1)

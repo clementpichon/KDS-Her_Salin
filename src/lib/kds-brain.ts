@@ -1,4 +1,5 @@
 import type { DraftItem, DraftPaninoItem, Order, PaninoOrderItem, Settings } from "./kds-types";
+import { isOrderActive } from "./order-status";
 
 export type WorkloadLevel = "calme" | "actif" | "tendu" | "sature";
 
@@ -95,8 +96,10 @@ export function computeBrainSnapshot({
   cashierActivityLoad = 0,
   cashierActivityDetails,
 }: ComputeBrainInput): BrainSnapshot {
-  const activeOrders = orders.filter((order) => order.status !== "delivered");
+  const activeOrders = orders.filter(isOrderActive);
   const activeOrderById = new Map(activeOrders.map((order) => [order.id, order]));
+  const activeOrderIds = new Set(activeOrders.map((order) => order.id));
+  const activePaninoSource = paninoItems.filter((item) => activeOrderIds.has(item.order_id));
   const pizzasToPrepare = activeOrders.flatMap((order) => (
     order.status === "to_prepare" && isOrderDueForPrep(order) ? order.items ?? [] : []
   ));
@@ -106,12 +109,12 @@ export function computeBrainSnapshot({
   const pizzasReady = activeOrders.flatMap((order) => (
     order.status === "ready" ? order.items ?? [] : []
   ));
-  const paninosPending = paninoItems.filter((item) => {
+  const paninosPending = activePaninoSource.filter((item) => {
     if (item.status !== "pending") return false;
     const order = activeOrderById.get(item.order_id);
-    return !order || isOrderDueForPrep(order) || order.pains_panino_status === "pret";
+    return !!order && (isOrderDueForPrep(order) || order.pains_panino_status === "pret");
   });
-  const paninosInProgress = paninoItems.filter((item) => item.status === "in_progress");
+  const paninosInProgress = activePaninoSource.filter((item) => item.status === "in_progress");
   const activePaninoItems = [...paninosPending, ...paninosInProgress];
 
   const pizzaioloLoad =

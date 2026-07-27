@@ -8,6 +8,7 @@ import { computeStock, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
+import { isOrderActive } from "@/lib/order-status";
 import type { Order, PaninoOrderItem, PaninoStatus } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/panino")({
@@ -55,10 +56,16 @@ function PaninoKds() {
   }, []);
 
   const ordersById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
+  const activeItems = useMemo(() => {
+    return items.filter((item) => {
+      const order = ordersById.get(item.order_id);
+      return !order || isOrderActive(order);
+    });
+  }, [items, ordersById]);
 
   const groups: Group[] = useMemo(() => {
     const map = new Map<string, PaninoOrderItem[]>();
-    for (const it of items) {
+    for (const it of activeItems) {
       const arr = map.get(it.order_id) ?? [];
       arr.push(it);
       map.set(it.order_id, arr);
@@ -66,6 +73,7 @@ function PaninoKds() {
     const out: Group[] = [];
     for (const [order_id, list] of map) {
       const order = ordersById.get(order_id);
+      if (order && !isOrderActive(order)) continue;
       const status = aggregateStatus(list);
       // Once the whole group is done, hide it immediately — it moves to "Prêtes"
       if (status === "done") continue;
@@ -87,7 +95,7 @@ function PaninoKds() {
       });
     }
     return out.sort((a, b) => a.requested_time.localeCompare(b.requested_time));
-  }, [items, ordersById]);
+  }, [activeItems, ordersById]);
 
   const maybeRecordOrderReady = (orderId: string, doneItemIds: Set<string>) => {
     const order = ordersById.get(orderId);
@@ -135,8 +143,8 @@ function PaninoKds() {
   };
 
   const counts = {
-    pending: items.filter((i) => i.status === "pending").length,
-    in_progress: items.filter((i) => i.status === "in_progress").length,
+    pending: activeItems.filter((i) => i.status === "pending").length,
+    in_progress: activeItems.filter((i) => i.status === "in_progress").length,
   };
 
   return (

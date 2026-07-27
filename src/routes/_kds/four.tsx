@@ -11,6 +11,7 @@ import { friesLabel } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
+import { isOrderActive } from "@/lib/order-status";
 import type { OrderItem, PaninoOrderItem } from "@/lib/kds-types";
 
 
@@ -68,6 +69,7 @@ function Four() {
 
   const list = orders
     .filter((o) => {
+      if (!isOrderActive(o)) return false;
       if (o.status === "in_oven") return true;
       // commandes pain-only ou pains pas encore cuits
       const bread = breadCountByOrder.get(o.id) ?? 0;

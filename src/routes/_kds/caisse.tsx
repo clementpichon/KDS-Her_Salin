@@ -39,6 +39,7 @@ import {
 } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
+import { isOrderActive } from "@/lib/order-status";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
 import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
@@ -352,7 +353,7 @@ function Caisse() {
   };
 
   const todayOrders = orders
-    .filter((o) => o.status !== "delivered")
+    .filter(isOrderActive)
     .sort((a, b) => new Date(a.requested_time).getTime() - new Date(b.requested_time).getTime());
   const readyOrders = todayOrders.filter((o) => {
     const paninos = paninoByOrder.get(o.id) ?? [];

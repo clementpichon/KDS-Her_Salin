@@ -3,6 +3,7 @@ import { ShoppingCart, Pizza as PizzaIcon, Flame, PackageCheck, Settings as Sett
 import { useOrders, useSettings, usePaninoOrderItems } from "@/hooks/use-kds-data";
 import { computeStock, formatTime, isLate, minutesUntil } from "@/lib/scheduling";
 import { computeBrainSnapshot } from "@/lib/kds-brain";
+import { isOrderActive } from "@/lib/order-status";
 
 export const Route = createFileRoute("/_kds/")({
   head: () => ({
@@ -23,11 +24,13 @@ function Home() {
   const { items: paninoItems } = usePaninoOrderItems();
 
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
+  const activeOrders = orders.filter(isOrderActive);
+  const activeOrderIds = new Set(activeOrders.map((order) => order.id));
   const counts = {
     to_prepare: orders.filter((o) => o.status === "to_prepare").length,
     in_oven: orders.filter((o) => o.status === "in_oven").length,
     ready: orders.filter((o) => o.status === "ready").length,
-    panino: paninoItems.filter((i) => i.status !== "done").length,
+    panino: paninoItems.filter((i) => i.status !== "done" && activeOrderIds.has(i.order_id)).length,
   };
   const paninoByOrder = new Map<string, typeof paninoItems>();
   for (const item of paninoItems) {
@@ -36,7 +39,7 @@ function Home() {
     paninoByOrder.set(item.order_id, list);
   }
   const watchList = orders
-    .filter((order) => order.status !== "delivered")
+    .filter(isOrderActive)
     .map((order) => {
       const paninos = paninoByOrder.get(order.id) ?? [];
       const stage =

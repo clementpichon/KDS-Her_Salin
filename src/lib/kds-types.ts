@@ -1,4 +1,4 @@
-export type OrderStatus = "to_prepare" | "in_oven" | "ready" | "delivered";
+export type OrderStatus = "to_prepare" | "in_oven" | "ready" | "delivered" | "cancelled";
 export type SystemMode = "test" | "learning" | "normal";
 
 export interface Pizza {
@@ -68,9 +68,11 @@ export interface Order {
   customer_name: string;
   requested_time: string;
   status: OrderStatus;
+  pizzaiolo_queue_position: number | null;
   prep_start_time: string | null;
   created_at: string;
   updated_at: string;
+  cancelled_at: string | null;
   notes: string | null;
   pains_panino_status: PainsPaninoStatus | null;
   customer_phone_hash: string | null;

@@ -31,6 +31,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { KDS_AUTH_KEY, resetKdsPassword, updateKdsPassword, verifyKdsCredentials } from "@/lib/kds-auth";
 import { computeStock } from "@/lib/scheduling";
+import { isOrderActive } from "@/lib/order-status";
 import type { Settings, Pizza, Ingredient, PaninoProduct, SystemMode } from "@/lib/kds-types";
 
 
@@ -112,9 +113,10 @@ function Reglages() {
   if (!settings) return <div className="p-8">Chargement…</div>;
 
   const stock = computeStock(orders, settings, paninoItems);
-  const activeOrders = orders.filter((order) => order.status !== "delivered");
+  const activeOrders = orders.filter(isOrderActive);
+  const activeOrderIds = new Set(activeOrders.map((order) => order.id));
   const pendingPizzaCount = activeOrders.reduce((total, order) => total + (order.items?.length ?? 0), 0);
-  const pendingPaninoCount = paninoItems.filter((item) => item.status !== "done").length;
+  const pendingPaninoCount = paninoItems.filter((item) => item.status !== "done" && activeOrderIds.has(item.order_id)).length;
   const pizzaioloPace = prepTimeToPacePercent(form.prep_time_per_pizza_sec);
 
   const save = async () => {

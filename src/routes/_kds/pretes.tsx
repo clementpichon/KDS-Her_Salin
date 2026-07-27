@@ -9,6 +9,7 @@ import { CashierStationHeader } from "@/components/kds/CashierStationHeader";
 import { formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber } from "@/lib/phone-utils";
+import { isOrderActive } from "@/lib/order-status";
 import type { PaninoOrderItem } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pretes")({
@@ -52,7 +53,7 @@ function Pretes() {
 
   const list = orders
     .filter((o) => {
-      if (o.status === "delivered") return false;
+      if (!isOrderActive(o)) return false;
       if (deliveredIds.has(o.id)) return false;
       const paninos = paninoByOrder.get(o.id) ?? [];
       const hasPizzas = (o.items?.length ?? 0) > 0;
@@ -63,7 +64,7 @@ function Pretes() {
       return pizzasReady && paninosDone;
     })
     .sort((a, b) => a.requested_time.localeCompare(b.requested_time));
-  const activeOrders = orders.filter((o) => o.status !== "delivered" && !deliveredIds.has(o.id));
+  const activeOrders = orders.filter((o) => isOrderActive(o) && !deliveredIds.has(o.id));
   const lateReadyCount = list.filter((o) => isLate(o.requested_time)).length;
 
   const deliver = async (id: string) => {

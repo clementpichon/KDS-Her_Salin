@@ -1,4 +1,5 @@
 import type { Order, Settings } from "./kds-types";
+import { isOrderVisibleInWorkload } from "./order-status";
 
 /**
  * Calcule l'heure à laquelle la préparation doit commencer pour une commande,
@@ -46,7 +47,7 @@ export function computePizzaCapacity(
   const capacity = Math.max(1, settings.oven_capacity);
   const requestedWindow = getOvenWindow(requestedTime, settings);
   const overlappingOrders = orders
-    .filter((order) => order.status !== "delivered" && order.status !== "ready")
+    .filter((order) => isOrderVisibleInWorkload(order) && order.status !== "delivered" && order.status !== "ready")
     .map((order) => ({
       order,
       pizzaCount: order.items?.length ?? 0,
@@ -138,11 +139,14 @@ export function computeStock(
   s: Settings,
   paninoItems: { product_key: string; created_at?: string; order_id?: string }[] = [],
 ): number {
-  const ordersAfterReset = orders.filter((order) => isAfterStockReset(order.created_at, s.paton_stock_reset_at));
+  const ordersAfterReset = orders.filter((order) => (
+    isOrderVisibleInWorkload(order) && isAfterStockReset(order.created_at, s.paton_stock_reset_at)
+  ));
   const orderIdsAfterReset = new Set(ordersAfterReset.map((order) => order.id));
   const usedPizzas = ordersAfterReset.reduce((acc, o) => acc + (o.items?.length ?? 0), 0);
   const usedPaninos = paninoItems.filter((p) => {
     if (p.product_key !== "panino") return false;
+    if (p.order_id && !orderIdsAfterReset.has(p.order_id)) return false;
     if (p.created_at) return isAfterStockReset(p.created_at, s.paton_stock_reset_at);
     return p.order_id ? orderIdsAfterReset.has(p.order_id) : true;
   }).length;

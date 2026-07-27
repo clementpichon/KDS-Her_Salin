@@ -1,4 +1,5 @@
 import type { Order, OrderItem, PaninoOrderItem } from "./kds-types";
+import { isOrderActive } from "./order-status";
 import { formatTime } from "./scheduling";
 
 export type PizzaioloQueueJob = {
@@ -6,6 +7,7 @@ export type PizzaioloQueueJob = {
   customer_name: string;
   requested_time: string;
   prep_start_time: string | null;
+  queue_position: number | null;
   orders: Order[];
   items: OrderItem[];
   paninos: PaninoOrderItem[];
@@ -35,6 +37,7 @@ export function buildPizzaioloQueue(
   const jobs = new Map<string, PizzaioloQueueJob>();
 
   for (const order of orders) {
+    if (!isOrderActive(order)) continue;
     const hasPizzas = (order.items?.length ?? 0) > 0;
     const paninos = paninoByOrder.get(order.id) ?? [];
     const breadCount = paninos.filter((item) => item.product_key === "panino").length;
@@ -57,6 +60,7 @@ export function buildPizzaioloQueue(
         customer_name: order.customer_name,
         requested_time: order.requested_time,
         prep_start_time: order.prep_start_time,
+        queue_position: order.pizzaiolo_queue_position ?? null,
         orders: [order],
         items: [...orderItems],
         paninos: [...paninos],
@@ -76,9 +80,27 @@ export function buildPizzaioloQueue(
     ) {
       existing.prep_start_time = order.prep_start_time;
     }
+    if (
+      order.pizzaiolo_queue_position != null &&
+      (existing.queue_position === null || order.pizzaiolo_queue_position < existing.queue_position)
+    ) {
+      existing.queue_position = order.pizzaiolo_queue_position;
+    }
   }
 
-  return Array.from(jobs.values()).sort((a, b) => a.requested_time.localeCompare(b.requested_time));
+  return Array.from(jobs.values()).sort(comparePizzaioloJobs);
+}
+
+export function comparePizzaioloJobs(a: PizzaioloQueueJob, b: PizzaioloQueueJob) {
+  if (a.queue_position !== null || b.queue_position !== null) {
+    if (a.queue_position === null) return 1;
+    if (b.queue_position === null) return -1;
+    if (a.queue_position !== b.queue_position) return a.queue_position - b.queue_position;
+  }
+
+  const byRequestedTime = a.requested_time.localeCompare(b.requested_time);
+  if (byRequestedTime !== 0) return byRequestedTime;
+  return a.customer_name.localeCompare(b.customer_name, "fr");
 }
 
 function isStartedForPizzaiolo(order: Order, paninos: PaninoOrderItem[]) {

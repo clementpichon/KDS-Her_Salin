@@ -1,16 +1,32 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Flame, Minus, Clock, User, Eye, EyeOff, Sandwich, Fish, Utensils } from "lucide-react";
+import { Flame, Minus, Clock, User, Eye, EyeOff, Sandwich, Fish, Utensils, MoreVertical, GripVertical, Trash2, ArrowUpDown } from "lucide-react";
 import { toast } from "sonner";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import { useOrders, useSettings, usePaninoOrderItems } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { computeStock, formatTime, minutesUntil, isLate } from "@/lib/scheduling";
 import { paninoDisplayName } from "@/lib/kds-formatting";
-import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
-import { buildPaninoItemsByOrder, buildPizzaioloQueue } from "@/lib/pizzaiolo-queue";
+import { buildPaninoItemsByOrder, buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
   head: () => ({
@@ -32,6 +48,10 @@ function Pizzaiolo() {
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [reorderJobId, setReorderJobId] = useState<string | null>(null);
+  const [dragJobId, setDragJobId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ jobId: string; placement: "before" | "after" } | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<PizzaioloQueueJob | null>(null);
   const isLearningMode = settings?.system_mode === "learning";
 
   const paninoByOrder = useMemo(() => buildPaninoItemsByOrder(paninoItems), [paninoItems]);
@@ -46,6 +66,105 @@ function Pizzaiolo() {
   };
 
   const list = useMemo(() => buildPizzaioloQueue(orders, paninoItems), [orders, paninoItems]);
+
+  const saveManualQueueOrder = async (orderedJobs: PizzaioloQueueJob[]) => {
+    const updates = orderedJobs.flatMap((job, index) => {
+      const position = (index + 1) * 1000;
+      return job.orders.map((order) =>
+        supabase
+          .from("orders")
+          .update({ pizzaiolo_queue_position: position })
+          .eq("id", order.id),
+      );
+    });
+
+    const results = await Promise.all(updates);
+    if (results.some((result) => result.error)) {
+      toast.error("Impossible d'enregistrer le nouvel ordre");
+      return false;
+    }
+
+    toast.success("Nouvel ordre enregistré");
+    return true;
+  };
+
+  const reorderJob = async (sourceJobId: string, targetJobId: string, placement: "before" | "after") => {
+    if (sourceJobId === targetJobId) return;
+    const source = list.find((job) => job.id === sourceJobId);
+    if (!source) return;
+
+    const withoutSource = list.filter((job) => job.id !== sourceJobId);
+    const insertionTargetIndex = withoutSource.findIndex((job) => job.id === targetJobId);
+    if (insertionTargetIndex < 0) return;
+    const insertAt = placement === "before" ? insertionTargetIndex : insertionTargetIndex + 1;
+    const next = [...withoutSource];
+    next.splice(Math.max(0, insertAt), 0, source);
+
+    const saved = await saveManualQueueOrder(next);
+    if (saved) {
+      setReorderJobId(null);
+      setDragJobId(null);
+      setDropTarget(null);
+    }
+  };
+
+  const cancelJob = async (job: PizzaioloQueueJob) => {
+    const orderIds = job.orders.map((order) => order.id);
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        status: "cancelled",
+        cancelled_at: new Date().toISOString(),
+        pizzaiolo_queue_position: null,
+      })
+      .in("id", orderIds);
+
+    if (error) {
+      toast.error("Impossible de supprimer la commande");
+      return;
+    }
+
+    void Promise.all(
+      job.orders.map((order) =>
+        logProductionEvent({
+          settings,
+          eventType: "ORDER_CANCELLED",
+          station: "pizzaiolo",
+          orderId: order.id,
+          productType: "order",
+          metadata: { source: "pizzaiolo_menu" },
+        }),
+      ),
+    );
+
+    setFocusedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(job.id);
+      return next;
+    });
+    if (reorderJobId === job.id) setReorderJobId(null);
+    setDeleteCandidate(null);
+    toast.success("Commande retirée du KDS");
+  };
+
+  const startDrag = (event: DragEvent<HTMLElement>, jobId: string) => {
+    if (reorderJobId !== jobId) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    setDragJobId(jobId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", jobId);
+  };
+
+  const handleDrop = async (event: DragEvent<HTMLElement>, targetJobId: string, placement: "before" | "after") => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceJobId = dragJobId ?? event.dataTransfer.getData("text/plain");
+    if (!sourceJobId) return;
+    await reorderJob(sourceJobId, targetJobId, placement);
+  };
 
   const sendToOven = async (jobId: string, pizzaOrderIds: string[], breadOrderIds: string[]) => {
     if (busyIds.has(jobId)) return;
@@ -162,15 +281,6 @@ function Pizzaiolo() {
     return Array.from(m.entries());
   })();
 
-  const groups = new Map<string, typeof list>();
-  for (const job of list) {
-    const t = formatTime(job.requested_time);
-    const arr = groups.get(t) ?? [];
-    arr.push(job);
-    groups.set(t, arr);
-  }
-  const groupEntries = Array.from(groups.entries());
-
   return (
     <div className="p-4">
       <div className="mb-4 flex items-center justify-between rounded-2xl border bg-card p-4 shadow-sm">
@@ -201,43 +311,86 @@ function Pizzaiolo() {
 
       {list.length === 0 && <EmptyState text="Aucune commande à préparer 🎉" />}
 
-      {groupEntries.map(([time, ordersAt]) => (
-        <TimeSlotGroup
-          key={time}
-          time={time}
-          count={ordersAt.length}
-          accentClass="border-status-prepare/40"
-        >
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {ordersAt.map((job) => {
-              const mins = minutesUntil(job.prep_start_time ?? job.requested_time);
-              const urgent = mins <= 2;
-              const canStart = mins <= 0;
-              const focused = focusedIds.has(job.id);
-              const paninos = job.paninos;
-              const breadCount = paninos.filter((p) => p.product_key === "panino").length;
-              const fishCount = paninos.filter((p) => p.product_key === "fishno").length;
-              const friesCount = paninos.filter((p) => p.product_key === "cornet_frites").length;
-              const hasPizzas = job.items.length > 0;
-              const hasOtherPaninoWork = fishCount + friesCount > 0 || (breadCount > 0 && !hasPizzas);
-              const pizzaOrderIds = job.orders
-                .filter((order) => (order.items?.length ?? 0) > 0 && order.status === "to_prepare")
-                .map((order) => order.id);
-              const breadOrderIds = job.orders
-                .filter((order) => {
-                  const orderBreadCount = (paninoByOrder.get(order.id) ?? []).filter((p) => p.product_key === "panino").length;
-                  return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
-                })
-                .map((order) => order.id);
-              const notes = Array.from(
-                new Set(job.orders.map((order) => order.notes?.trim()).filter((note): note is string => !!note)),
-              );
-              return (
-                <article key={job.id} onClick={() => toggleFocus(job.id)} className={`rounded-2xl border-2 bg-card p-4 shadow-sm cursor-pointer transition ${urgent ? "border-destructive" : "border-status-prepare"} ${focused ? "ring-4 ring-primary shadow-xl scale-[1.01] bg-primary/5 md:col-span-2 xl:col-span-2 z-10" : ""}`}>
-                  <header className="mb-3 flex items-start justify-between">
-                    <div>
+      {reorderJobId && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-primary/40 bg-primary/10 p-4 text-sm font-semibold text-primary">
+          <span>Mode réorganisation actif : glissez la tuile avec la poignée, ou touchez une zone “déposer avant/après”.</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setReorderJobId(null);
+              setDragJobId(null);
+              setDropTarget(null);
+            }}
+          >
+            Annuler
+          </Button>
+        </div>
+      )}
+
+      {list.length > 0 && (
+        <div className={`grid gap-3 ${reorderJobId ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-3"}`}>
+          {list.map((job) => {
+            const mins = minutesUntil(job.prep_start_time ?? job.requested_time);
+            const urgent = mins <= 2;
+            const focused = focusedIds.has(job.id);
+            const paninos = job.paninos;
+            const breadCount = paninos.filter((p) => p.product_key === "panino").length;
+            const fishCount = paninos.filter((p) => p.product_key === "fishno").length;
+            const friesCount = paninos.filter((p) => p.product_key === "cornet_frites").length;
+            const hasPizzas = job.items.length > 0;
+            const hasOtherPaninoWork = fishCount + friesCount > 0 || (breadCount > 0 && !hasPizzas);
+            const pizzaOrderIds = job.orders
+              .filter((order) => (order.items?.length ?? 0) > 0 && order.status === "to_prepare")
+              .map((order) => order.id);
+            const breadOrderIds = job.orders
+              .filter((order) => {
+                const orderBreadCount = (paninoByOrder.get(order.id) ?? []).filter((p) => p.product_key === "panino").length;
+                return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
+              })
+              .map((order) => order.id);
+            const notes = Array.from(
+              new Set(job.orders.map((order) => order.notes?.trim()).filter((note): note is string => !!note)),
+            );
+            const isReordering = reorderJobId === job.id;
+            const isDragging = dragJobId === job.id;
+            return (
+              <div key={job.id} className={reorderJobId ? "space-y-2" : ""}>
+                <QueueDropZone
+                  active={!!reorderJobId && reorderJobId !== job.id}
+                  highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "before"}
+                  label={`Déposer avant ${job.customer_name}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDropTarget({ jobId: job.id, placement: "before" });
+                  }}
+                  onDrop={(event) => handleDrop(event, job.id, "before")}
+                  onClick={() => { if (reorderJobId) void reorderJob(reorderJobId, job.id, "before"); }}
+                />
+
+                <article
+                  draggable={isReordering}
+                  onDragStart={(event) => startDrag(event, job.id)}
+                  onDragEnd={() => {
+                    setDragJobId(null);
+                    setDropTarget(null);
+                  }}
+                  onClick={() => toggleFocus(job.id)}
+                  className={`rounded-2xl border-2 bg-card p-4 shadow-sm cursor-pointer transition ${
+                    urgent ? "border-destructive" : "border-status-prepare"
+                  } ${
+                    focused ? "ring-4 ring-primary shadow-xl scale-[1.01] bg-primary/5 md:col-span-2 xl:col-span-2 z-10" : ""
+                  } ${
+                    isReordering ? "cursor-grab ring-4 ring-primary/50" : ""
+                  } ${
+                    isDragging ? "opacity-50" : ""
+                  }`}
+                >
+                  <header className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <h2 className="flex items-center gap-2 text-lg font-bold"><User className="h-5 w-5" /> {job.customer_name}</h2>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                         <Clock className="h-4 w-4" />Pour {formatTime(job.requested_time)}
                         {isLate(job.requested_time) && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-400">En retard</span>}
                         {job.orders.length > 1 && (
@@ -248,6 +401,53 @@ function Pizzaiolo() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      {isReordering && (
+                        <button
+                          type="button"
+                          draggable
+                          onDragStart={(event) => startDrag(event, job.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded-full bg-primary/15 p-2 text-primary cursor-grab active:cursor-grabbing"
+                          aria-label="Poignée pour déplacer la commande"
+                          title="Déplacer la commande"
+                        >
+                          <GripVertical className="h-5 w-5" />
+                        </button>
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={(event) => event.stopPropagation()}
+                            className="rounded-full bg-muted p-2 text-muted-foreground transition hover:bg-muted/80"
+                            aria-label="Menu de la commande"
+                          >
+                            <MoreVertical className="h-5 w-5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-64">
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              setReorderJobId(job.id);
+                              setFocusedIds((prev) => new Set(prev).add(job.id));
+                              toast("Mode réorganisation activé");
+                            }}
+                          >
+                            <ArrowUpDown className="mr-2 h-4 w-4" />
+                            Réorganiser la commande
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() => {
+                              setDeleteCandidate(job);
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Supprimer la commande
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleFocus(job.id); }}
                         className={`rounded-full p-1.5 transition ${focused ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
@@ -257,7 +457,7 @@ function Pizzaiolo() {
                         {focused ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                       <div className={`rounded-full px-3 py-1 text-sm font-bold ${urgent ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-status-prepare/15 text-status-prepare"}`}>
-                        {mins <= 0 ? "MAINTENANT" : `dans ${mins} min`}
+                        {mins <= 0 ? "À lancer" : `prévu dans ${mins} min`}
                       </div>
                     </div>
                   </header>
@@ -340,43 +540,113 @@ function Pizzaiolo() {
                         {pizzasPending && (
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pizzas`, pizzaOrderIds, []); }}
-                            disabled={!canStart || busyIds.has(`${job.id}-pizzas`) || pizzaLearningBlocked}
-                            className={`w-full h-12 text-base font-bold ${canStart ? "bg-status-oven hover:bg-status-oven/90" : "bg-muted text-muted-foreground hover:bg-muted"}`}
+                            disabled={busyIds.has(`${job.id}-pizzas`) || pizzaLearningBlocked}
+                            className="w-full h-12 bg-status-oven text-base font-bold hover:bg-status-oven/90"
                           >
                             <Flame className="mr-2 h-5 w-5" />
-                            {!canStart
-                              ? `À lancer dans ${mins} min`
-                              : busyIds.has(`${job.id}-pizzas`)
-                                ? "Envoi…"
-                                : pizzaLearningBlocked
-                                  ? `Cochez les pizzas (${done}/${total})`
-                                  : `Pizzas au four (${done}/${total})`}
+                            {busyIds.has(`${job.id}-pizzas`)
+                              ? "Envoi…"
+                              : pizzaLearningBlocked
+                                ? `Cochez les pizzas (${done}/${total})`
+                                : `Pizzas au four (${done}/${total})`}
                           </Button>
                         )}
                         {painsPending && (
                           <Button
                             onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pains`, [], breadOrderIds); }}
-                            disabled={!canStart || busyIds.has(`${job.id}-pains`)}
-                            className={`w-full h-12 text-base font-bold ${canStart ? "bg-primary hover:bg-primary/90" : "bg-muted text-muted-foreground hover:bg-muted"}`}
+                            disabled={busyIds.has(`${job.id}-pains`)}
+                            className="w-full h-12 bg-primary text-base font-bold hover:bg-primary/90"
                           >
                             <Sandwich className="mr-2 h-5 w-5" />
-                            {!canStart ? `Pain${breadCount > 1 ? "s" : ""} à lancer dans ${mins} min` : busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
+                            {busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
                           </Button>
                         )}
                       </div>
                     );
                   })()}
-
                 </article>
-              );
-            })}
-          </div>
-        </TimeSlotGroup>
-      ))}
+
+                <QueueDropZone
+                  active={!!reorderJobId && reorderJobId !== job.id}
+                  highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "after"}
+                  label={`Déposer après ${job.customer_name}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDropTarget({ jobId: job.id, placement: "after" });
+                  }}
+                  onDrop={(event) => handleDrop(event, job.id, "after")}
+                  onClick={() => { if (reorderJobId) void reorderJob(reorderJobId, job.id, "after"); }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <AlertDialog open={!!deleteCandidate} onOpenChange={(open) => { if (!open) setDeleteCandidate(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer cette commande ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteCandidate
+                ? `Confirmer la suppression de la commande ${deleteCandidate.orders.length > 1 ? `groupée de ${deleteCandidate.customer_name}` : `n°${deleteCandidate.orders[0]?.id.slice(0, 8)}`} ? Cette action la retirera de tous les postes du KDS.`
+                : "Cette action retirera la commande de tous les postes du KDS."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteCandidate) void cancelJob(deleteCandidate); }}
+            >
+              Supprimer la commande
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
 function EmptyState({ text }: { text: string }) {
   return <div className="rounded-2xl border-2 border-dashed p-12 text-center text-muted-foreground">{text}</div>;
+}
+
+function QueueDropZone({
+  active,
+  highlighted,
+  label,
+  onDragOver,
+  onDrop,
+  onClick,
+}: {
+  active: boolean;
+  highlighted: boolean;
+  label: string;
+  onDragOver: (event: DragEvent<HTMLDivElement>) => void;
+  onDrop: (event: DragEvent<HTMLDivElement>) => void;
+  onClick: () => void;
+}) {
+  if (!active) return null;
+
+  return (
+    <div
+      role="button"
+      tabIndex={-1}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`flex min-h-12 items-center justify-center rounded-xl border-2 border-dashed text-xs font-black uppercase transition ${
+        highlighted
+          ? "border-primary bg-primary/15 text-primary"
+          : "border-muted-foreground/30 bg-muted/40 text-muted-foreground"
+      }`}
+    >
+      {label}
+    </div>
+  );
 }
