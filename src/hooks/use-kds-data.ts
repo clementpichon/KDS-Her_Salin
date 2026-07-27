@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: Settings = {
   batch_interval_sec: 40,
   initial_paton_stock: 120,
   paton_losses: 0,
+  paton_stock_reset_at: null,
   system_mode: "test",
 };
 

@@ -20,6 +20,7 @@ export interface Settings {
   batch_interval_sec: number;
   initial_paton_stock: number;
   paton_losses: number;
+  paton_stock_reset_at: string | null;
   system_mode: SystemMode;
 }
 

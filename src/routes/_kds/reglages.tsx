@@ -175,12 +175,17 @@ function Reglages() {
 
     setResetStockBusy(true);
     try {
+      const resetAt = new Date().toISOString();
       const { error } = await supabase
         .from("settings")
-        .update({ initial_paton_stock: 0, paton_losses: 0 })
+        .update({ initial_paton_stock: 0, paton_losses: 0, paton_stock_reset_at: resetAt })
         .eq("id", 1);
       if (error) {
         console.error(error);
+        if (isMissingPatonStockResetColumn(error.message)) {
+          toast.error("Migration Supabase manquante : ajoutez paton_stock_reset_at aux réglages");
+          return;
+        }
         toast.error("Impossible de réinitialiser le stock pâtons");
         return;
       }
@@ -220,7 +225,10 @@ function Reglages() {
         }
       }
 
-      const { error: settingsError } = await supabase.from("settings").update({ paton_losses: 0 }).eq("id", 1);
+      const { error: settingsError } = await supabase
+        .from("settings")
+        .update({ paton_losses: 0, paton_stock_reset_at: new Date().toISOString() })
+        .eq("id", 1);
       if (settingsError) {
         console.error(settingsError);
         toast.error("Commandes supprimées, mais le stock pâtons n'a pas pu être réinitialisé");
@@ -601,6 +609,10 @@ function useLocalControlSettings(): [
 
 function isMissingSystemModeColumn(message: string) {
   return message.includes("system_mode") || message.includes("column");
+}
+
+function isMissingPatonStockResetColumn(message: string) {
+  return message.includes("paton_stock_reset_at") || message.includes("column");
 }
 
 function ToggleRow({

@@ -136,11 +136,26 @@ function roundUpToMinutes(date: Date, minutes: number) {
 export function computeStock(
   orders: Order[],
   s: Settings,
-  paninoItems: { product_key: string }[] = [],
+  paninoItems: { product_key: string; created_at?: string; order_id?: string }[] = [],
 ): number {
-  const usedPizzas = orders.reduce((acc, o) => acc + (o.items?.length ?? 0), 0);
-  const usedPaninos = paninoItems.filter((p) => p.product_key === "panino").length;
+  const ordersAfterReset = orders.filter((order) => isAfterStockReset(order.created_at, s.paton_stock_reset_at));
+  const orderIdsAfterReset = new Set(ordersAfterReset.map((order) => order.id));
+  const usedPizzas = ordersAfterReset.reduce((acc, o) => acc + (o.items?.length ?? 0), 0);
+  const usedPaninos = paninoItems.filter((p) => {
+    if (p.product_key !== "panino") return false;
+    if (p.created_at) return isAfterStockReset(p.created_at, s.paton_stock_reset_at);
+    return p.order_id ? orderIdsAfterReset.has(p.order_id) : true;
+  }).length;
   return Math.max(0, s.initial_paton_stock - usedPizzas - usedPaninos - s.paton_losses);
+}
+
+function isAfterStockReset(createdAt: string | null | undefined, resetAt: string | null | undefined): boolean {
+  if (!resetAt) return true;
+  const resetTime = new Date(resetAt).getTime();
+  if (Number.isNaN(resetTime)) return true;
+  if (!createdAt) return true;
+  const createdTime = new Date(createdAt).getTime();
+  return Number.isNaN(createdTime) || createdTime >= resetTime;
 }
 
 export function formatTime(d: Date | string): string {

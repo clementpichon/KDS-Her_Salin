@@ -278,6 +278,7 @@ export type Database = {
           initial_paton_stock: number
           oven_capacity: number
           paton_losses: number
+          paton_stock_reset_at: string | null
           prep_time_per_pizza_sec: number
           safety_margin_sec: number
           system_mode: string
@@ -291,6 +292,7 @@ export type Database = {
           initial_paton_stock?: number
           oven_capacity?: number
           paton_losses?: number
+          paton_stock_reset_at?: string | null
           prep_time_per_pizza_sec?: number
           safety_margin_sec?: number
           system_mode?: string
@@ -304,6 +306,7 @@ export type Database = {
           initial_paton_stock?: number
           oven_capacity?: number
           paton_losses?: number
+          paton_stock_reset_at?: string | null
           prep_time_per_pizza_sec?: number
           safety_margin_sec?: number
           system_mode?: string
