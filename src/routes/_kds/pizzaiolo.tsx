@@ -10,17 +10,7 @@ import { computeStock, formatTime, minutesUntil, isLate } from "@/lib/scheduling
 import { paninoDisplayName } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
-import type { Order, OrderItem, PaninoOrderItem } from "@/lib/kds-types";
-
-type PizzaioloJob = {
-  id: string;
-  customer_name: string;
-  requested_time: string;
-  prep_start_time: string | null;
-  orders: Order[];
-  items: OrderItem[];
-  paninos: PaninoOrderItem[];
-};
+import { buildPaninoItemsByOrder, buildPizzaioloQueue } from "@/lib/pizzaiolo-queue";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
   head: () => ({
@@ -44,16 +34,7 @@ function Pizzaiolo() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const isLearningMode = settings?.system_mode === "learning";
 
-  const paninoByOrder = useMemo(() => {
-    const m = new Map<string, PaninoOrderItem[]>();
-    for (const it of paninoItems) {
-      if (it.status === "done") continue;
-      const arr = m.get(it.order_id) ?? [];
-      arr.push(it);
-      m.set(it.order_id, arr);
-    }
-    return m;
-  }, [paninoItems]);
+  const paninoByOrder = useMemo(() => buildPaninoItemsByOrder(paninoItems), [paninoItems]);
 
   const toggleFocus = (id: string) => {
     setFocusedIds((prev) => {
@@ -64,55 +45,7 @@ function Pizzaiolo() {
     });
   };
 
-  const ordersToDisplay = orders
-    .filter((o) => {
-      const hasPizzas = (o.items?.length ?? 0) > 0;
-      const paninos = paninoByOrder.get(o.id) ?? [];
-      const breadCount = paninos.filter((p) => p.product_key === "panino").length;
-      const pizzasDone = !hasPizzas || o.status !== "to_prepare";
-      const painsDone = breadCount === 0 || (o.pains_panino_status && o.pains_panino_status !== "a_preparer");
-      // Affiche tant que le pizzaiolo a une tâche en cours (pizzas à préparer OU pains à préparer)
-      if (pizzasDone && painsDone) return false;
-      return hasPizzas || breadCount > 0;
-    })
-    .sort((a, b) => a.requested_time.localeCompare(b.requested_time));
-
-  const list = useMemo(() => {
-    const jobs = new Map<string, PizzaioloJob>();
-    for (const order of ordersToDisplay) {
-      const key = pizzaioloJobKey(order);
-      const existing = jobs.get(key);
-      const orderItems = order.status === "to_prepare" ? order.items ?? [] : [];
-      const orderPaninos = paninoByOrder.get(order.id) ?? [];
-      if (!existing) {
-        jobs.set(key, {
-          id: key,
-          customer_name: order.customer_name,
-          requested_time: order.requested_time,
-          prep_start_time: order.prep_start_time,
-          orders: [order],
-          items: [...orderItems],
-          paninos: [...orderPaninos],
-        });
-        continue;
-      }
-
-      existing.orders.push(order);
-      existing.items.push(...orderItems);
-      existing.paninos.push(...orderPaninos);
-      if (order.requested_time.localeCompare(existing.requested_time) < 0) {
-        existing.requested_time = order.requested_time;
-      }
-      if (
-        order.prep_start_time &&
-        (!existing.prep_start_time || order.prep_start_time.localeCompare(existing.prep_start_time) < 0)
-      ) {
-        existing.prep_start_time = order.prep_start_time;
-      }
-    }
-
-    return Array.from(jobs.values()).sort((a, b) => a.requested_time.localeCompare(b.requested_time));
-  }, [ordersToDisplay, paninoByOrder]);
+  const list = useMemo(() => buildPizzaioloQueue(orders, paninoItems), [orders, paninoItems]);
 
   const sendToOven = async (jobId: string, pizzaOrderIds: string[], breadOrderIds: string[]) => {
     if (busyIds.has(jobId)) return;
@@ -229,7 +162,7 @@ function Pizzaiolo() {
     return Array.from(m.entries());
   })();
 
-  const groups = new Map<string, PizzaioloJob[]>();
+  const groups = new Map<string, typeof list>();
   for (const job of list) {
     const t = formatTime(job.requested_time);
     const arr = groups.get(t) ?? [];
@@ -446,11 +379,4 @@ function Pizzaiolo() {
 
 function EmptyState({ text }: { text: string }) {
   return <div className="rounded-2xl border-2 border-dashed p-12 text-center text-muted-foreground">{text}</div>;
-}
-
-function pizzaioloJobKey(order: Order) {
-  const customer = order.customer_name.trim().toLocaleLowerCase("fr");
-  const requested = new Date(order.requested_time);
-  const day = requested.toISOString().slice(0, 10);
-  return `${day}-${formatTime(order.requested_time)}-${customer}`;
 }
