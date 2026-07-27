@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -396,22 +396,6 @@ function Caisse() {
         activeCount={todayOrders.length}
         urgentCount={urgentCashierCount}
       />
-      {readyOrders.length > 0 && (
-        <Link
-          to="/pretes"
-          className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-status-ready/50 bg-status-ready/10 p-4 text-status-ready shadow-sm transition hover:bg-status-ready/15"
-        >
-          <span>
-            <span className="block text-sm font-black uppercase">À remettre maintenant</span>
-            <span className="text-sm text-foreground/80">
-              {readyOrders.length} commande{readyOrders.length > 1 ? "s" : ""} prête{readyOrders.length > 1 ? "s" : ""} côté caisse.
-            </span>
-          </span>
-          <span className="rounded-full bg-status-ready px-3 py-1 text-sm font-black text-white">
-            Voir
-          </span>
-        </Link>
-      )}
       <div className="grid gap-4 min-[720px]:grid-cols-[minmax(300px,340px)_minmax(0,1fr)] min-[720px]:items-start xl:grid-cols-[360px_minmax(0,1fr)]">
       <h2 className="sr-only">Caisse — Prise de commande</h2>
       {/* Panel gauche : commande */}
