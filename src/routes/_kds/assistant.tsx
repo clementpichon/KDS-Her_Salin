@@ -89,9 +89,15 @@ function AssistantPage() {
     return <div className="p-8">Chargement de l'assistant…</div>;
   }
 
-  const tone = levelTone(snapshot.globalLevel);
-  const bottleneckLabel = snapshot.bottleneck.load > 0 ? snapshot.bottleneck.label : "Aucun goulot";
-  const bottleneckDetails = snapshot.bottleneck.load > 0 ? snapshot.bottleneck.details : "Aucun poste en charge immédiate";
+  const visibleStations = snapshot.stations.filter((station) => station.key !== "caisse");
+  const visibleBottleneck = visibleStations.length > 0
+    ? visibleStations.reduce((worst, current) => current.ratio > worst.ratio ? current : worst, visibleStations[0])
+    : null;
+  const visibleGlobalLevel = visibleBottleneck && visibleBottleneck.load > 0 ? visibleBottleneck.level : "calme";
+  const visibleAdvice = snapshot.advice.filter((advice) => !advice.toLocaleLowerCase("fr").includes("caisse"));
+  const tone = levelTone(visibleGlobalLevel);
+  const bottleneckLabel = visibleBottleneck && visibleBottleneck.load > 0 ? visibleBottleneck.label : "Aucun goulot";
+  const bottleneckDetails = visibleBottleneck && visibleBottleneck.load > 0 ? visibleBottleneck.details : "Aucun poste en charge immédiate";
 
   return (
     <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -103,29 +109,31 @@ function AssistantPage() {
             </div>
             <h1 className="text-2xl font-black md:text-4xl">Goulot actuel : {bottleneckLabel}</h1>
             <p className="mt-2 max-w-2xl text-sm text-foreground/75 md:text-base">
-              {bottleneckDetails}. Niveau global : <span className="font-bold">{levelLabel(snapshot.globalLevel)}</span>.
+              {bottleneckDetails}. Niveau global : <span className="font-bold">{levelLabel(visibleGlobalLevel)}</span>.
             </p>
           </div>
           <div className={`rounded-2xl px-4 py-3 text-center font-black ${tone.badge}`}>
-            <div className="text-3xl">{Math.round(snapshot.bottleneck.ratio * 100)}%</div>
+            <div className="text-3xl">{Math.round((visibleBottleneck?.ratio ?? 0) * 100)}%</div>
             <div className="text-xs uppercase">charge goulot</div>
           </div>
         </div>
       </header>
 
-      <section className="mb-6 grid gap-3 md:grid-cols-3">
-        {snapshot.advice.map((advice) => (
-          <div key={advice} className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="mb-2 flex items-center gap-2 text-sm font-black uppercase text-primary">
-              <AlertTriangle className="h-4 w-4" /> Conseil
+      {visibleAdvice.length > 0 && (
+        <section className="mb-6 grid gap-3 md:grid-cols-3">
+          {visibleAdvice.map((advice) => (
+            <div key={advice} className="rounded-2xl border bg-card p-4 shadow-sm">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black uppercase text-primary">
+                <AlertTriangle className="h-4 w-4" /> Conseil
+              </div>
+              <p className="font-semibold">{advice}</p>
             </div>
-            <p className="font-semibold">{advice}</p>
-          </div>
-        ))}
-      </section>
+          ))}
+        </section>
+      )}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {snapshot.stations.map((station) => (
+        {visibleStations.map((station) => (
           <StationCard key={station.key} station={station} />
         ))}
       </section>
@@ -135,17 +143,10 @@ function AssistantPage() {
           <h2 className="mb-4 flex items-center gap-2 text-lg font-black">
             <Activity className="h-5 w-5 text-primary" /> Lecture du service
           </h2>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-3">
             <Metric label="Commandes actives" value={activeOrders.length} />
             <Metric label="Commandes prêtes" value={readyOrders.length} />
-            <Metric label="À surveiller caisse" value={urgentCashierCount} />
             <Metric label="Produits Pani'NO actifs" value={paninoItems.filter((item) => item.status !== "done").length} />
-          </div>
-          <div className="mt-3 rounded-xl border bg-background p-4">
-            <div className="text-xs font-bold uppercase text-muted-foreground">Activité caisse</div>
-            <div className={`mt-1 text-lg font-black ${phoneBusy || cashierActivity ? "text-status-prepare" : "text-secondary"}`}>
-              {cashierPhoneDetails ?? cashierActivityDetails(cashierActivity)}
-            </div>
           </div>
           <div className="mt-4 rounded-xl border bg-background p-4">
             <div className="font-bold">Décision rapide</div>

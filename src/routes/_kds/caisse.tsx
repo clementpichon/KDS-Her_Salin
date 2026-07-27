@@ -431,26 +431,14 @@ function Caisse() {
           </div>
           <div>
             <Label htmlFor="phone">Téléphone (optionnel)</Label>
-            <div className="flex gap-2">
-              <Input
-                id="phone"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="Ex : 06 12 34 56 78"
-                inputMode="tel"
-                className="h-11 text-base"
-              />
-              {phoneStatus?.current_phone_number && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-11 shrink-0"
-                  onClick={() => setCustomerPhone(phoneStatus.current_phone_number ?? "")}
-                >
-                  <PhoneCall className="mr-1 h-4 w-4" /> Appel
-                </Button>
-              )}
-            </div>
+            <Input
+              id="phone"
+              value={customerPhone}
+              onChange={(e) => setCustomerPhone(e.target.value)}
+              placeholder="Ex : 06 12 34 56 78"
+              inputMode="tel"
+              className="h-11 text-base"
+            />
             {customerPhone && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Enregistré comme {formatPhoneNumber(customerPhone)}

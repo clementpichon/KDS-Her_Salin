@@ -62,10 +62,16 @@ function Home() {
       urgentCashierCount: watchList.filter((entry) => entry.late).length,
     })
     : null;
+  const visibleBrainStations = brain?.stations.filter((station) => station.key !== "caisse") ?? [];
+  const visibleBottleneck = visibleBrainStations.length > 0
+    ? visibleBrainStations.reduce((worst, current) => current.ratio > worst.ratio ? current : worst, visibleBrainStations[0])
+    : null;
+  const visibleBrainLevel = visibleBottleneck && visibleBottleneck.load > 0 ? visibleBottleneck.level : "calme";
+  const visibleBottleneckLabel = visibleBottleneck && visibleBottleneck.load > 0 ? visibleBottleneck.label : "Aucun goulot";
   const assistantBadge =
-    brain?.globalLevel === "sature" ? 3
-    : brain?.globalLevel === "tendu" ? 2
-    : brain?.globalLevel === "actif" ? 1
+    visibleBrainLevel === "sature" ? 3
+    : visibleBrainLevel === "tendu" ? 2
+    : visibleBrainLevel === "actif" ? 1
     : null;
 
   return (
@@ -84,10 +90,10 @@ function Home() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
         <TileCard
           to="/assistant"
-          color={brain?.globalLevel === "sature" ? "bg-destructive" : brain?.globalLevel === "tendu" ? "bg-status-prepare" : "bg-secondary"}
+          color={visibleBrainLevel === "sature" ? "bg-destructive" : visibleBrainLevel === "tendu" ? "bg-status-prepare" : "bg-secondary"}
           icon={<BrainCircuit className="h-8 w-8" />}
           label="Assistant"
-          sub={brain ? `Goulot : ${brain.bottleneck.label}` : "Charge globale"}
+          sub={brain ? `Goulot : ${visibleBottleneckLabel}` : "Charge globale"}
           badge={assistantBadge}
         />
         <TileCard to="/caisse" color="bg-primary" icon={<ShoppingCart className="h-8 w-8" />} label="Caisse" sub="Nouvelle commande" badge={null} />
