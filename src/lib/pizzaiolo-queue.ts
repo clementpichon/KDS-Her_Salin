@@ -1,5 +1,6 @@
 import type { Order, OrderItem, PaninoOrderItem } from "./kds-types";
 import { isOrderActive } from "./order-status";
+import { pizzaProductionStatus } from "./pizza-production";
 import { formatTime } from "./scheduling";
 
 export type PizzaioloQueueJob = {
@@ -38,10 +39,11 @@ export function buildPizzaioloQueue(
 
   for (const order of orders) {
     if (!isOrderActive(order)) continue;
-    const hasPizzas = (order.items?.length ?? 0) > 0;
+    const orderItems = (order.items ?? []).filter((item) => pizzaProductionStatus(item, order) === "to_prepare");
+    const hasPizzas = orderItems.length > 0;
     const paninos = paninoByOrder.get(order.id) ?? [];
     const breadCount = paninos.filter((item) => item.product_key === "panino").length;
-    const pizzasDone = !hasPizzas || order.status !== "to_prepare";
+    const pizzasDone = !hasPizzas;
     const painsDone =
       breadCount === 0 ||
       (!!order.pains_panino_status && order.pains_panino_status !== "a_preparer");
@@ -52,7 +54,6 @@ export function buildPizzaioloQueue(
 
     const key = pizzaioloJobKey(order);
     const existing = jobs.get(key);
-    const orderItems = order.status === "to_prepare" ? order.items ?? [] : [];
 
     if (!existing) {
       jobs.set(key, {
@@ -104,7 +105,10 @@ export function comparePizzaioloJobs(a: PizzaioloQueueJob, b: PizzaioloQueueJob)
 }
 
 function isStartedForPizzaiolo(order: Order, paninos: PaninoOrderItem[]) {
-  const pizzasStarted = (order.items ?? []).some((item) => item.prepared);
+  const hasPendingPizzaWork = (order.items ?? []).some((item) => pizzaProductionStatus(item, order) === "to_prepare");
+  if (hasPendingPizzaWork) return false;
+  const pizzasStarted =
+    (order.items ?? []).some((item) => pizzaProductionStatus(item, order) !== "to_prepare");
   const hasBread = paninos.some((item) => item.product_key === "panino");
   const breadStarted = hasBread && !!order.pains_panino_status && order.pains_panino_status !== "a_preparer";
   return pizzasStarted || breadStarted;

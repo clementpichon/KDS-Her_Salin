@@ -42,10 +42,14 @@ export type Database = {
           extras: string[]
           id: string
           order_id: string
+          oven_batch_id: string | null
           pizza_id: string | null
           pizza_name: string
           prepared: boolean
+          production_status: string
+          ready_at: string | null
           removed: string[]
+          sent_to_oven_at: string | null
         }
         Insert: {
           created_at?: string
@@ -53,10 +57,14 @@ export type Database = {
           extras?: string[]
           id?: string
           order_id: string
+          oven_batch_id?: string | null
           pizza_id?: string | null
           pizza_name: string
           prepared?: boolean
+          production_status?: string
+          ready_at?: string | null
           removed?: string[]
+          sent_to_oven_at?: string | null
         }
         Update: {
           created_at?: string
@@ -64,10 +72,14 @@ export type Database = {
           extras?: string[]
           id?: string
           order_id?: string
+          oven_batch_id?: string | null
           pizza_id?: string | null
           pizza_name?: string
           prepared?: boolean
+          production_status?: string
+          ready_at?: string | null
           removed?: string[]
+          sent_to_oven_at?: string | null
         }
         Relationships: [
           {

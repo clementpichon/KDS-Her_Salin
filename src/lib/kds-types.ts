@@ -1,5 +1,6 @@
 export type OrderStatus = "to_prepare" | "in_oven" | "ready" | "delivered" | "cancelled";
 export type SystemMode = "test" | "learning" | "normal";
+export type PizzaProductionStatus = "to_prepare" | "in_oven" | "ready";
 
 export interface Pizza {
   id: string;
@@ -58,6 +59,10 @@ export interface OrderItem {
   extras: string[];
   removed: string[];
   prepared: boolean;
+  production_status?: PizzaProductionStatus;
+  oven_batch_id?: string | null;
+  sent_to_oven_at?: string | null;
+  ready_at?: string | null;
   cut_into: number | null;
 }
 

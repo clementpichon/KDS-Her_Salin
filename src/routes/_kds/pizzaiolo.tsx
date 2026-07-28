@@ -1,11 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Flame, Minus, Clock, User, Eye, EyeOff, Sandwich, Fish, Utensils, MoreVertical, GripVertical, Trash2, ArrowUpDown } from "lucide-react";
+import {
+  ArrowUpDown,
+  Clock,
+  Fish,
+  Flame,
+  GripVertical,
+  Minus,
+  MoreVertical,
+  RotateCcw,
+  Sandwich,
+  Send,
+  Sparkles,
+  Trash2,
+  User,
+  Utensils,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useMemo, useState, type DragEvent } from "react";
-import { useOrders, useSettings, usePaninoOrderItems } from "@/hooks/use-kds-data";
+import { useOrders, usePaninoOrderItems, usePizzas, useSettings } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,49 +38,70 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { computeStock, formatTime, minutesUntil, isLate } from "@/lib/scheduling";
-import { paninoDisplayName } from "@/lib/kds-formatting";
+import { computeStock, formatTime } from "@/lib/scheduling";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPaninoItemsByOrder, buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
+import { getPizzaBaseInfo, pizzaProductionStatus, type PizzaBaseInfo } from "@/lib/pizza-production";
+import type { Order, OrderItem, Pizza } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
   head: () => ({
     meta: [
-      { title: "Pizzaiolo — À préparer — Her Salin" },
-      { name: "description", content: "Écran pizzaiolo Her Salin : liste des commandes à préparer, suivi par pizza et envoi au four." },
-      { property: "og:title", content: "Pizzaiolo — À préparer" },
-      { property: "og:description", content: "Liste des commandes à préparer et envoi au four." },
+      { title: "Pizzaiolo — Plan de travail — Her Salin" },
+      { name: "description", content: "Poste pizzaiolo Her Salin : plan de travail tactile, selection libre des pizzas et envoi par fournee." },
+      { property: "og:title", content: "Pizzaiolo — Plan de travail" },
+      { property: "og:description", content: "Plan de travail tactile du pizzaiolo et file compacte des commandes." },
     ],
     links: [{ rel: "canonical", href: "/pizzaiolo" }],
   }),
   component: Pizzaiolo,
 });
 
+type WorkbenchSlot = {
+  id: number;
+  item: OrderItem | null;
+  job: PizzaioloQueueJob | null;
+};
+
+type QueuePizza = {
+  item: OrderItem;
+  job: PizzaioloQueueJob;
+  base: PizzaBaseInfo;
+};
+
+function createInitialSlots(): WorkbenchSlot[] {
+  return [0, 1, 2, 3].map((id) => ({ id, item: null, job: null }));
+}
+
 function Pizzaiolo() {
   const { orders } = useOrders();
+  const pizzas = usePizzas();
   const settings = useSettings();
   const { items: paninoItems } = usePaninoOrderItems();
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
-  const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
-  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [slots, setSlots] = useState<WorkbenchSlot[]>(() => createInitialSlots());
+  const [activeSlotId, setActiveSlotId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const [reorderJobId, setReorderJobId] = useState<string | null>(null);
   const [dragJobId, setDragJobId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ jobId: string; placement: "before" | "after" } | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<PizzaioloQueueJob | null>(null);
-  const isLearningMode = settings?.system_mode === "learning";
 
   const paninoByOrder = useMemo(() => buildPaninoItemsByOrder(paninoItems), [paninoItems]);
-
-  const toggleFocus = (id: string) => {
-    setFocusedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const list = useMemo(() => buildPizzaioloQueue(orders, paninoItems), [orders, paninoItems]);
+  const selectedIds = useMemo(() => new Set(slots.flatMap((slot) => (slot.item ? [slot.item.id] : []))), [slots]);
+  const selectedSlots = slots.filter((slot) => slot.item && slot.job);
+  const freeCount = slots.filter((slot) => !slot.item).length;
+
+  const queuePizzas = useMemo<QueuePizza[]>(() => {
+    return list.flatMap((job) =>
+      job.items
+        .filter((item) => !selectedIds.has(item.id))
+        .map((item) => ({ item, job, base: getPizzaBaseInfo(item, pizzas) })),
+    );
+  }, [list, pizzas, selectedIds]);
+
+  const suggestion = useMemo(() => buildSuggestion(queuePizzas, Math.max(1, freeCount)), [queuePizzas, freeCount]);
 
   const saveManualQueueOrder = async (orderedJobs: PizzaioloQueueJob[]) => {
     const updates = orderedJobs.flatMap((job, index) => {
@@ -84,7 +120,7 @@ function Pizzaiolo() {
       return false;
     }
 
-    toast.success("Nouvel ordre enregistré");
+    toast.success("Nouvel ordre enregistre");
     return true;
   };
 
@@ -137,14 +173,12 @@ function Pizzaiolo() {
       ),
     );
 
-    setFocusedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(job.id);
-      return next;
-    });
+    setSlots((current) =>
+      current.map((slot) => (slot.job?.id === job.id ? { ...slot, item: null, job: null } : slot)),
+    );
     if (reorderJobId === job.id) setReorderJobId(null);
     setDeleteCandidate(null);
-    toast.success("Commande retirée du KDS");
+    toast.success("Commande retiree du KDS");
   };
 
   const startDrag = (event: DragEvent<HTMLElement>, jobId: string) => {
@@ -166,422 +200,392 @@ function Pizzaiolo() {
     await reorderJob(sourceJobId, targetJobId, placement);
   };
 
-  const sendToOven = async (jobId: string, pizzaOrderIds: string[], breadOrderIds: string[]) => {
-    if (busyIds.has(jobId)) return;
-    setBusyIds((prev) => new Set(prev).add(jobId));
-    const selectedPizzaItems = list
-      .flatMap((job) => job.items)
-      .filter((item) => pizzaOrderIds.includes(item.order_id));
-    if (isLearningMode && selectedPizzaItems.some((item) => !item.prepared)) {
-      toast.warning("Mode apprentissage : cochez chaque pizza préparée avant l'envoi au four.");
-      setBusyIds((prev) => {
-        const next = new Set(prev);
-        next.delete(jobId);
-        return next;
-      });
-      return;
-    }
-
-    const updates = [];
-    if (pizzaOrderIds.length > 0) {
-      updates.push(supabase.from("orders").update({ status: "in_oven" }).in("id", pizzaOrderIds));
-    }
-    if (breadOrderIds.length > 0) {
-      updates.push(supabase.from("orders").update({ pains_panino_status: "en_cours" }).in("id", breadOrderIds));
-    }
-
-    if (updates.length === 0) {
-      setBusyIds((prev) => {
-        const next = new Set(prev);
-        next.delete(jobId);
-        return next;
-      });
-      return;
-    }
-
-    const results = await Promise.all(updates);
-    if (results.some((result) => result.error)) {
-      toast.error("Impossible d'envoyer toute la commande au four");
-    } else {
-      void Promise.all([
-        ...selectedPizzaItems.map((item) =>
-          logProductionEvent({
-            settings,
-            eventType: "PIZZA_SENT_TO_OVEN",
-            station: "pizzaiolo",
-            orderId: item.order_id,
-            orderItemId: item.id,
-            productType: "pizza",
-            productName: item.pizza_name,
-            metadata: { job_id: jobId },
-          }),
-        ),
-        ...breadOrderIds.map((orderId) =>
-          Promise.all([
-            logProductionEvent({
-              settings,
-              eventType: "PANINO_BREAD_PREP_STARTED",
-              station: "pizzaiolo",
-              orderId,
-              productType: "panino_bread",
-              productName: "Pain Pani'NO",
-              metadata: { job_id: jobId },
-            }),
-            logProductionEvent({
-              settings,
-              eventType: "PANINO_BREAD_SENT_TO_OVEN",
-              station: "pizzaiolo",
-              orderId,
-              productType: "panino_bread",
-              productName: "Pain Pani'NO",
-              metadata: { job_id: jobId },
-            }),
-          ]),
-        ),
-      ]);
-      toast.success("Commande envoyée au four");
-    }
-    setBusyIds((prev) => {
-      const next = new Set(prev);
-      next.delete(jobId);
-      return next;
-    });
-  };
-
-
   const loseDough = async () => {
     if (!settings) return;
     await supabase.from("settings").update({ paton_losses: settings.paton_losses + 1 }).eq("id", 1);
-    toast("Pâton retiré du stock");
+    toast("Paton retire du stock");
   };
-  const toggleItemPrepared = async (itemId: string, prepared: boolean) => {
-    const item = list.flatMap((job) => job.items).find((candidate) => candidate.id === itemId);
-    const { error } = await supabase.from("order_items").update({ prepared }).eq("id", itemId);
-    if (!error && prepared) {
-      void logProductionEvent({
-        settings,
-        eventType: "PIZZA_PREP_STARTED",
-        station: "pizzaiolo",
-        orderId: item?.order_id ?? null,
-        orderItemId: itemId,
-        productType: "pizza",
-        productName: item?.pizza_name ?? null,
-      });
+
+  const clearSlot = (slotId: number) => {
+    setSlots((current) => current.map((slot) => (slot.id === slotId ? { ...slot, item: null, job: null } : slot)));
+  };
+
+  const moveSlot = (slotId: number, direction: -1 | 1) => {
+    const index = slots.findIndex((slot) => slot.id === slotId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= slots.length) return;
+    setSlots((current) => {
+      const next = [...current];
+      const source = next[index];
+      const target = next[nextIndex];
+      next[index] = { ...source, item: target.item, job: target.job };
+      next[nextIndex] = { ...target, item: source.item, job: source.job };
+      return next;
+    });
+    setActiveSlotId(slots[nextIndex]?.id ?? null);
+  };
+
+  const selectPizza = (job: PizzaioloQueueJob, item: OrderItem) => {
+    if (selectedIds.has(item.id)) {
+      setSlots((current) => current.map((slot) => (slot.item?.id === item.id ? { ...slot, item: null, job: null } : slot)));
+      return;
+    }
+
+    const freeSlot = slots.find((slot) => !slot.item);
+    const targetSlot = freeSlot ?? (activeSlotId !== null ? slots.find((slot) => slot.id === activeSlotId) : null);
+
+    if (!targetSlot) {
+      toast.warning("Les 4 disques sont occupes. Liberez une place ou touchez le disque a remplacer.");
+      return;
+    }
+
+    if (targetSlot.item) toast("Pizza remplacee sur le plan de travail");
+    setSlots((current) =>
+      current.map((slot) => (slot.id === targetSlot.id ? { ...slot, item, job } : slot)),
+    );
+    setActiveSlotId(targetSlot.id);
+  };
+
+  const selectWholeJob = (job: PizzaioloQueueJob) => {
+    const available = job.items.filter((item) => !selectedIds.has(item.id));
+    if (available.length === 0) return;
+    const openSlots = slots.filter((slot) => !slot.item);
+    if (openSlots.length === 0) {
+      toast.warning("Aucun disque libre pour ajouter cette commande");
+      return;
+    }
+
+    const picked = available.slice(0, openSlots.length);
+    setSlots((current) => {
+      const next = current.map((slot) => ({ ...slot }));
+      let cursor = 0;
+      for (const slot of next) {
+        if (slot.item) continue;
+        const item = picked[cursor];
+        if (!item) break;
+        slot.item = item;
+        slot.job = job;
+        cursor += 1;
+      }
+      return next;
+    });
+
+    if (available.length > picked.length) {
+      toast.warning(`${available.length - picked.length} pizza(s) restent dans la commande`);
+    } else {
+      toast.success("Commande ajoutee au plan de travail");
     }
   };
 
-  // Compte des pizzas par créneau horaire (affichage informatif uniquement,
-  // aucune limite n'est appliquée).
-  const slotCounts = (() => {
-    const m = new Map<string, number>();
-    for (const o of list) {
-      const t = formatTime(o.requested_time);
-      m.set(t, (m.get(t) ?? 0) + o.items.length);
+  const applySuggestion = () => {
+    if (suggestion.items.length === 0) return;
+    const openSlots = slots.filter((slot) => !slot.item);
+    if (openSlots.length === 0) {
+      toast.warning("Aucun disque libre");
+      return;
     }
-    return Array.from(m.entries());
-  })();
+
+    setSlots((current) => {
+      const next = current.map((slot) => ({ ...slot }));
+      let cursor = 0;
+      for (const slot of next) {
+        if (slot.item) continue;
+        const suggested = suggestion.items[cursor];
+        if (!suggested) break;
+        slot.item = suggested.item;
+        slot.job = suggested.job;
+        cursor += 1;
+      }
+      return next;
+    });
+    toast.success("Suggestion placee sur le plan de travail");
+  };
+
+  const sendWorkbenchToOven = async () => {
+    const batchSlots = slots.filter((slot): slot is WorkbenchSlot & { item: OrderItem; job: PizzaioloQueueJob } => !!slot.item && !!slot.job);
+    if (batchSlots.length === 0 || busy) return;
+
+    setBusy(true);
+    const now = new Date().toISOString();
+    const batchId = createBatchId();
+    const selectedItemIds = batchSlots.map((slot) => slot.item.id);
+    const affectedOrders = uniqueOrders(batchSlots.flatMap((slot) => slot.job.orders));
+
+    const { error: itemsError } = await supabase
+      .from("order_items")
+      .update({
+        production_status: "in_oven",
+        oven_batch_id: batchId,
+        sent_to_oven_at: now,
+        prepared: false,
+      })
+      .in("id", selectedItemIds);
+
+    if (itemsError) {
+      toast.error(
+        itemsError.message.includes("production_status")
+          ? "Migration Supabase manquante : appliquez la migration des pizzas individuelles."
+          : "Impossible d'envoyer la fournee au four",
+      );
+      setBusy(false);
+      return;
+    }
+
+    const completeOrderIds: string[] = [];
+    const partialOrderIds: string[] = [];
+    for (const order of affectedOrders) {
+      const remainingToPrepare = (order.items ?? []).some(
+        (item) => !selectedItemIds.includes(item.id) && pizzaProductionStatus(item, order) === "to_prepare",
+      );
+      if (remainingToPrepare) partialOrderIds.push(order.id);
+      else completeOrderIds.push(order.id);
+    }
+
+    const orderUpdates = [];
+    if (completeOrderIds.length > 0) {
+      orderUpdates.push(
+        supabase
+          .from("orders")
+          .update({ status: "in_oven", pizzaiolo_queue_position: null })
+          .in("id", completeOrderIds),
+      );
+    }
+    if (partialOrderIds.length > 0) {
+      orderUpdates.push(
+        supabase
+          .from("orders")
+          .update({ status: "to_prepare" })
+          .in("id", partialOrderIds),
+      );
+    }
+
+    const orderResults = await Promise.all(orderUpdates);
+    if (orderResults.some((result) => result.error)) {
+      toast.warning("Fournee envoyee, mais certaines commandes n'ont pas ete synchronisees");
+    }
+
+    void Promise.all(
+      batchSlots.map((slot) =>
+        logProductionEvent({
+          settings,
+          eventType: "PIZZA_SENT_TO_OVEN",
+          station: "pizzaiolo",
+          orderId: slot.item.order_id,
+          orderItemId: slot.item.id,
+          productType: "pizza",
+          productName: slot.item.pizza_name,
+          metadata: {
+            batch_id: batchId,
+            workbench_slot: slot.id + 1,
+            base: getPizzaBaseInfo(slot.item, pizzas).label,
+            split_order: partialOrderIds.includes(slot.item.order_id),
+          },
+        }),
+      ),
+    );
+
+    setSlots(createInitialSlots());
+    setActiveSlotId(null);
+    setBusy(false);
+    toast.success(`${batchSlots.length} pizza(s) envoyee(s) au four`);
+  };
+
+  const sendBreadToOven = async (job: PizzaioloQueueJob) => {
+    const breadOrderIds = job.orders
+      .filter((order) => {
+        const orderBreadCount = (paninoByOrder.get(order.id) ?? []).filter((item) => item.product_key === "panino").length;
+        return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
+      })
+      .map((order) => order.id);
+
+    if (breadOrderIds.length === 0) return;
+    const { error } = await supabase
+      .from("orders")
+      .update({ pains_panino_status: "en_cours" })
+      .in("id", breadOrderIds);
+
+    if (error) {
+      toast.error("Impossible d'envoyer les pains au four");
+      return;
+    }
+
+    void Promise.all(
+      breadOrderIds.flatMap((orderId) => [
+        logProductionEvent({
+          settings,
+          eventType: "PANINO_BREAD_PREP_STARTED",
+          station: "pizzaiolo",
+          orderId,
+          productType: "panino_bread",
+          productName: "Pain Pani'NO",
+        }),
+        logProductionEvent({
+          settings,
+          eventType: "PANINO_BREAD_SENT_TO_OVEN",
+          station: "pizzaiolo",
+          orderId,
+          productType: "panino_bread",
+          productName: "Pain Pani'NO",
+        }),
+      ]),
+    );
+    toast.success("Pain(s) Pani'NO envoyes au four");
+  };
 
   return (
-    <div className="p-4">
-      <div className="mb-4 flex items-center justify-between rounded-2xl border bg-card p-4 shadow-sm">
-        <h1 className="text-xl font-bold flex items-center gap-2"><Flame className="text-status-prepare" /> Pizzaiolo — À préparer ({list.length})</h1>
+    <div className="p-3 lg:p-4">
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border bg-card p-3 shadow-sm lg:p-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-black">
+            <Flame className="text-status-prepare" />
+            Pizzaiolo
+          </h1>
+          <p className="text-sm font-semibold text-muted-foreground">Plan de travail tactile · {list.length} commande(s) disponibles</p>
+        </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
-            <div className="text-[10px] uppercase text-muted-foreground">Pâtons</div>
+            <div className="text-[10px] uppercase text-muted-foreground">Patons</div>
             <div className={`text-xl font-bold ${stock < 20 ? "text-destructive" : "text-secondary"}`}>{stock}</div>
           </div>
-          <Button variant="outline" onClick={loseDough}><Minus className="mr-1 h-4 w-4" />1 pâton</Button>
+          <Button variant="outline" onClick={loseDough} className="h-11">
+            <Minus className="mr-1 h-4 w-4" />1 paton
+          </Button>
         </div>
       </div>
 
-      {slotCounts.length > 0 && (
-        <div className="mb-4 rounded-2xl border bg-card p-4 shadow-sm">
-          <div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Pizzas par créneau</div>
-          <div className="flex flex-wrap gap-2">
-            {slotCounts.map(([time, count]) => (
-              <div key={time} className="flex items-center gap-2 rounded-lg border-2 border-status-prepare/40 bg-status-prepare/10 px-3 py-2 text-status-prepare">
-                <Clock className="h-4 w-4" />
-                <span className="text-base font-bold">{time}</span>
-                <span className="rounded-full bg-status-prepare px-2 py-0.5 text-sm font-bold text-white">{count}</span>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(21rem,3fr)]">
+        <section className="xl:sticky xl:top-24 xl:self-start">
+          <div className="rounded-3xl border bg-card p-4 shadow-sm lg:p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-wide text-primary">Plan de travail</div>
+                <h2 className="text-2xl font-black">4 disques de preparation</h2>
+                <p className="text-sm font-semibold text-muted-foreground">
+                  Touchez une pizza a droite pour la poser sur le premier disque libre.
+                </p>
               </div>
-            ))}
+              <Button
+                onClick={sendWorkbenchToOven}
+                disabled={busy || selectedSlots.length === 0}
+                className="h-12 min-w-44 bg-status-oven text-base font-black hover:bg-status-oven/90"
+              >
+                <Send className="mr-2 h-5 w-5" />
+                {busy ? "Envoi..." : "Envoyer au four"}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 sm:gap-5">
+              {slots.map((slot) => (
+                <WorkbenchDisc
+                  key={slot.id}
+                  slot={slot}
+                  active={activeSlotId === slot.id}
+                  base={slot.item ? getPizzaBaseInfo(slot.item, pizzas) : null}
+                  onSelect={() => setActiveSlotId(slot.id)}
+                  onClear={() => clearSlot(slot.id)}
+                  onMoveLeft={() => moveSlot(slot.id, -1)}
+                  onMoveRight={() => moveSlot(slot.id, 1)}
+                />
+              ))}
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto]">
+              <div className="rounded-2xl border bg-background p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-black">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Suggestion intelligente
+                </div>
+                {suggestion.items.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className={`rounded-full border px-2 py-1 text-xs font-black ${suggestion.base.badgeClassName}`}>
+                      Base {suggestion.base.label}
+                    </span>
+                    <span className="font-semibold text-muted-foreground">{suggestion.label}</span>
+                  </div>
+                ) : (
+                  <p className="text-sm font-semibold text-muted-foreground">Aucune suggestion disponible.</p>
+                )}
+              </div>
+              <Button variant="outline" onClick={applySuggestion} disabled={suggestion.items.length === 0} className="h-full min-h-14 font-black">
+                Appliquer
+              </Button>
+            </div>
+
+            {selectedSlots.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSlots(createInitialSlots());
+                  setActiveSlotId(null);
+                }}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Vider le plan de travail
+              </button>
+            )}
           </div>
-        </div>
-      )}
+        </section>
 
-      {list.length === 0 && <EmptyState text="Aucune commande à préparer 🎉" />}
-
-      {reorderJobId && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-primary/40 bg-primary/10 p-4 text-sm font-semibold text-primary">
-          <span>Mode réorganisation actif : glissez la tuile avec la poignée, ou touchez une zone “déposer avant/après”.</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setReorderJobId(null);
-              setDragJobId(null);
-              setDropTarget(null);
-            }}
-          >
-            Annuler
-          </Button>
-        </div>
-      )}
-
-      {list.length > 0 && (
-        <div className={`grid gap-3 ${reorderJobId ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-3"}`}>
-          {list.map((job) => {
-            const mins = minutesUntil(job.prep_start_time ?? job.requested_time);
-            const urgent = mins <= 2;
-            const focused = focusedIds.has(job.id);
-            const paninos = job.paninos;
-            const breadCount = paninos.filter((p) => p.product_key === "panino").length;
-            const fishCount = paninos.filter((p) => p.product_key === "fishno").length;
-            const friesCount = paninos.filter((p) => p.product_key === "cornet_frites").length;
-            const hasPizzas = job.items.length > 0;
-            const hasOtherPaninoWork = fishCount + friesCount > 0 || (breadCount > 0 && !hasPizzas);
-            const pizzaOrderIds = job.orders
-              .filter((order) => (order.items?.length ?? 0) > 0 && order.status === "to_prepare")
-              .map((order) => order.id);
-            const breadOrderIds = job.orders
-              .filter((order) => {
-                const orderBreadCount = (paninoByOrder.get(order.id) ?? []).filter((p) => p.product_key === "panino").length;
-                return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
-              })
-              .map((order) => order.id);
-            const notes = Array.from(
-              new Set(job.orders.map((order) => order.notes?.trim()).filter((note): note is string => !!note)),
-            );
-            const isReordering = reorderJobId === job.id;
-            const isDragging = dragJobId === job.id;
-            return (
-              <div key={job.id} className={reorderJobId ? "space-y-2" : ""}>
-                <QueueDropZone
-                  active={!!reorderJobId && reorderJobId !== job.id}
-                  highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "before"}
-                  label={`Déposer avant ${job.customer_name}`}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setDropTarget({ jobId: job.id, placement: "before" });
-                  }}
-                  onDrop={(event) => handleDrop(event, job.id, "before")}
-                  onClick={() => { if (reorderJobId) void reorderJob(reorderJobId, job.id, "before"); }}
-                />
-
-                <article
-                  draggable={isReordering}
-                  onDragStart={(event) => startDrag(event, job.id)}
-                  onDragEnd={() => {
-                    setDragJobId(null);
-                    setDropTarget(null);
-                  }}
-                  onClick={() => toggleFocus(job.id)}
-                  className={`rounded-2xl border-2 bg-card p-4 shadow-sm cursor-pointer transition ${
-                    urgent ? "border-destructive" : "border-status-prepare"
-                  } ${
-                    focused ? "ring-4 ring-primary shadow-xl scale-[1.01] bg-primary/5 md:col-span-2 xl:col-span-2 z-10" : ""
-                  } ${
-                    isReordering ? "cursor-grab ring-4 ring-primary/50" : ""
-                  } ${
-                    isDragging ? "opacity-50" : ""
-                  }`}
-                >
-                  <header className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="flex items-center gap-2 text-lg font-bold"><User className="h-5 w-5" /> {job.customer_name}</h2>
-                      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <Clock className="h-4 w-4" />Pour {formatTime(job.requested_time)}
-                        {isLate(job.requested_time) && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-400">En retard</span>}
-                        {job.orders.length > 1 && (
-                          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">
-                            {job.orders.length} tickets regroupés
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isReordering && (
-                        <button
-                          type="button"
-                          draggable
-                          onDragStart={(event) => startDrag(event, job.id)}
-                          onClick={(event) => event.stopPropagation()}
-                          className="rounded-full bg-primary/15 p-2 text-primary cursor-grab active:cursor-grabbing"
-                          aria-label="Poignée pour déplacer la commande"
-                          title="Déplacer la commande"
-                        >
-                          <GripVertical className="h-5 w-5" />
-                        </button>
-                      )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={(event) => event.stopPropagation()}
-                            className="rounded-full bg-muted p-2 text-muted-foreground transition hover:bg-muted/80"
-                            aria-label="Menu de la commande"
-                          >
-                            <MoreVertical className="h-5 w-5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-64">
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              setReorderJobId(job.id);
-                              setFocusedIds((prev) => new Set(prev).add(job.id));
-                              toast("Mode réorganisation activé");
-                            }}
-                          >
-                            <ArrowUpDown className="mr-2 h-4 w-4" />
-                            Réorganiser la commande
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onSelect={() => {
-                              setDeleteCandidate(job);
-                            }}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Supprimer la commande
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleFocus(job.id); }}
-                        className={`rounded-full p-1.5 transition ${focused ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
-                        aria-label={focused ? "Désélectionner" : "Mettre en évidence"}
-                        title={focused ? "Désélectionner" : "Mettre en évidence"}
-                      >
-                        {focused ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                      <div className={`rounded-full px-3 py-1 text-sm font-bold ${urgent ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-status-prepare/15 text-status-prepare"}`}>
-                        {mins <= 0 ? "À lancer" : `prévu dans ${mins} min`}
-                      </div>
-                    </div>
-                  </header>
-
-                  {notes.length > 0 && (
-                    <div className="mb-3 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">
-                      📝 {notes.join(" · ")}
-                    </div>
-                  )}
-
-                  {breadCount > 0 && (
-                    <div className="mb-3 rounded-lg border-2 border-primary/50 bg-primary/10 p-3">
-                      <div className="flex items-center gap-2 text-base font-bold text-primary">
-                        <Sandwich className="h-5 w-5" /> Préparer {breadCount} pain{breadCount > 1 ? "s" : ""} Pani'NO
-                      </div>
-                      <div className="mt-1 text-xs font-semibold text-primary/80">
-                        Info poste Pani'NO : le steak peut être lancé en temps masqué pendant la cuisson du pain.
-                      </div>
-                    </div>
-                  )}
-
-                  {hasOtherPaninoWork && (
-                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 px-2 py-1.5 text-xs font-semibold text-primary">
-                      <span className="uppercase">Aussi au poste Pani'NO :</span>
-                      {breadCount > 0 && !hasPizzas && (
-                        <span className="inline-flex items-center gap-1"><Sandwich className="h-3.5 w-3.5" />{breadCount} Pani'NO</span>
-                      )}
-                      {fishCount > 0 && (
-                        <span className="inline-flex items-center gap-1"><Fish className="h-3.5 w-3.5" />{fishCount} Fish & NO</span>
-                      )}
-                      {friesCount > 0 && (
-                        <span className="inline-flex items-center gap-1"><Utensils className="h-3.5 w-3.5" />{friesCount} Cornet{friesCount > 1 ? "s" : ""} de frites</span>
-                      )}
-                      {(fishCount > 0 || friesCount > 0) && (
-                        <span className="w-full text-[11px] text-primary/80">Ces produits ne doivent pas attendre le pain Pani'NO.</span>
-                      )}
-                    </div>
-                  )}
-
-                  {hasPizzas && (
-                    <ul className="mb-3 space-y-2">
-                      {job.items.map((it) => (
-                        <li
-                          key={it.id}
-                          className={`flex items-start gap-3 rounded-lg border bg-background p-2 transition ${it.prepared ? "opacity-60" : ""}`}
-                        >
-                          <Checkbox
-                            checked={it.prepared}
-                            onCheckedChange={(c) => toggleItemPrepared(it.id, !!c)}
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label="Marquer comme préparé"
-                            className="mt-1 h-6 w-6"
-                          />
-                          <div className="flex-1">
-                            <div className={`font-semibold ${it.prepared ? "line-through" : ""}`}>{it.pizza_name}</div>
-                            {it.extras.length > 0 && <div className="text-xs text-secondary">+ {it.extras.join(", ")}</div>}
-                            {it.removed.length > 0 && <div className="text-xs text-destructive">– sans {it.removed.join(", ")}</div>}
-                            {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-
-                  {(hasPizzas || breadCount > 0) && (() => {
-                    const total = job.items.length;
-                    const done = job.items.filter((i) => i.prepared).length;
-                    const pizzasPending = pizzaOrderIds.length > 0;
-                    const painsPending = breadOrderIds.length > 0;
-                    const pizzaLearningBlocked = isLearningMode && pizzasPending && done < total;
-                    if (!pizzasPending && !painsPending) {
-                      return (
-                        <div className="rounded-md bg-status-ready/10 px-3 py-2 text-center text-xs font-semibold uppercase text-status-ready">
-                          Préparation envoyée ✓
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="grid gap-2">
-                        {pizzasPending && (
-                          <Button
-                            onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pizzas`, pizzaOrderIds, []); }}
-                            disabled={busyIds.has(`${job.id}-pizzas`) || pizzaLearningBlocked}
-                            className="w-full h-12 bg-status-oven text-base font-bold hover:bg-status-oven/90"
-                          >
-                            <Flame className="mr-2 h-5 w-5" />
-                            {busyIds.has(`${job.id}-pizzas`)
-                              ? "Envoi…"
-                              : pizzaLearningBlocked
-                                ? `Cochez les pizzas (${done}/${total})`
-                                : `Pizzas au four (${done}/${total})`}
-                          </Button>
-                        )}
-                        {painsPending && (
-                          <Button
-                            onClick={(e) => { e.stopPropagation(); sendToOven(`${job.id}-pains`, [], breadOrderIds); }}
-                            disabled={busyIds.has(`${job.id}-pains`)}
-                            className="w-full h-12 bg-primary text-base font-bold hover:bg-primary/90"
-                          >
-                            <Sandwich className="mr-2 h-5 w-5" />
-                            {busyIds.has(`${job.id}-pains`) ? "Envoi…" : `Pain${breadCount > 1 ? "s" : ""} Pani'NO au four (${breadCount})`}
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </article>
-
-                <QueueDropZone
-                  active={!!reorderJobId && reorderJobId !== job.id}
-                  highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "after"}
-                  label={`Déposer après ${job.customer_name}`}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setDropTarget({ jobId: job.id, placement: "after" });
-                  }}
-                  onDrop={(event) => handleDrop(event, job.id, "after")}
-                  onClick={() => { if (reorderJobId) void reorderJob(reorderJobId, job.id, "after"); }}
-                />
+        <aside className="min-h-0">
+          <div className="rounded-3xl border bg-card p-3 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2 px-1">
+              <div>
+                <h2 className="text-lg font-black">Commandes</h2>
+                <p className="text-xs font-semibold text-muted-foreground">Selection libre des pizzas</p>
               </div>
-            );
-          })}
-        </div>
-      )}
+              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-black text-primary">{list.length}</span>
+            </div>
+
+            {reorderJobId && (
+              <div className="mb-3 rounded-2xl border-2 border-primary/40 bg-primary/10 p-3 text-xs font-bold text-primary">
+                Mode reorganisation actif. Glissez avec la poignee ou touchez une zone de depot.
+              </div>
+            )}
+
+            {list.length === 0 ? (
+              <EmptyState text="Aucune pizza a preparer" />
+            ) : (
+              <div className="max-h-[calc(100dvh-12rem)] space-y-2 overflow-y-auto pr-1">
+                {list.map((job) => (
+                  <CompactOrderCard
+                    key={job.id}
+                    job={job}
+                    pizzas={pizzas}
+                    selectedIds={selectedIds}
+                    reorderJobId={reorderJobId}
+                    dragJobId={dragJobId}
+                    dropTarget={dropTarget}
+                    onSelectPizza={selectPizza}
+                    onSelectWholeJob={selectWholeJob}
+                    onStartReorder={(jobId) => {
+                      setReorderJobId(jobId);
+                      toast("Mode reorganisation active");
+                    }}
+                    onCancelReorder={() => {
+                      setReorderJobId(null);
+                      setDragJobId(null);
+                      setDropTarget(null);
+                    }}
+                    onDelete={() => setDeleteCandidate(job)}
+                    onSendBread={() => sendBreadToOven(job)}
+                    onDragStart={startDrag}
+                    onDragEnd={() => {
+                      setDragJobId(null);
+                      setDropTarget(null);
+                    }}
+                    onDrop={handleDrop}
+                    onDragOver={(jobId, placement) => setDropTarget({ jobId, placement })}
+                    onDropZoneClick={(targetJobId, placement) => {
+                      if (reorderJobId) void reorderJob(reorderJobId, targetJobId, placement);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
 
       <AlertDialog open={!!deleteCandidate} onOpenChange={(open) => { if (!open) setDeleteCandidate(null); }}>
         <AlertDialogContent>
@@ -589,7 +593,7 @@ function Pizzaiolo() {
             <AlertDialogTitle>Supprimer cette commande ?</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteCandidate
-                ? `Confirmer la suppression de la commande ${deleteCandidate.orders.length > 1 ? `groupée de ${deleteCandidate.customer_name}` : `n°${deleteCandidate.orders[0]?.id.slice(0, 8)}`} ? Cette action la retirera de tous les postes du KDS.`
+                ? `Confirmer la suppression de la commande ${deleteCandidate.orders.length > 1 ? `groupee de ${deleteCandidate.customer_name}` : `n°${deleteCandidate.orders[0]?.id.slice(0, 8)}`} ? Cette action la retirera de tous les postes du KDS.`
                 : "Cette action retirera la commande de tous les postes du KDS."}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -608,8 +612,269 @@ function Pizzaiolo() {
   );
 }
 
+function WorkbenchDisc({
+  slot,
+  active,
+  base,
+  onSelect,
+  onClear,
+  onMoveLeft,
+  onMoveRight,
+}: {
+  slot: WorkbenchSlot;
+  active: boolean;
+  base: PizzaBaseInfo | null;
+  onSelect: () => void;
+  onClear: () => void;
+  onMoveLeft: () => void;
+  onMoveRight: () => void;
+}) {
+  const filled = !!slot.item && !!slot.job;
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={onSelect}
+        className={`relative flex aspect-square w-full max-w-[18rem] flex-col items-center justify-center rounded-full border-[6px] bg-background p-5 text-center shadow-inner transition ${
+          filled ? base?.ringClassName ?? "border-primary/50" : "border-dashed border-muted-foreground/35"
+        } ${active ? "ring-4 ring-primary/30" : "hover:ring-4 hover:ring-primary/10"}`}
+        aria-label={filled ? `Disque ${slot.id + 1}, ${slot.item?.pizza_name}` : `Disque ${slot.id + 1} vide`}
+      >
+        <span className="absolute left-4 top-4 rounded-full bg-muted px-2 py-1 text-xs font-black text-muted-foreground">
+          {slot.id + 1}
+        </span>
+        {filled ? (
+          <>
+            <div className="text-lg font-black leading-tight sm:text-2xl">{slot.job.customer_name}</div>
+            <div className="mt-1 text-base font-black leading-tight text-primary sm:text-xl">{slot.item.pizza_name}</div>
+            {base && (
+              <span className={`mt-3 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-black uppercase ${base.badgeClassName}`}>
+                <span className={`h-2 w-2 rounded-full ${base.dotClassName}`} />
+                {base.label}
+              </span>
+            )}
+            {(slot.item.extras.length > 0 || slot.item.removed.length > 0 || slot.item.cut_into) && (
+              <div className="mt-2 max-w-full text-xs font-semibold text-muted-foreground">
+                {slot.item.extras.length > 0 && <div className="truncate text-secondary">+ {slot.item.extras.join(", ")}</div>}
+                {slot.item.removed.length > 0 && <div className="truncate text-destructive">Sans {slot.item.removed.join(", ")}</div>}
+                {slot.item.cut_into && <div className="font-black text-primary">A couper en {slot.item.cut_into}</div>}
+              </div>
+            )}
+          </>
+        ) : (
+          <span className="text-sm font-black uppercase tracking-wide text-muted-foreground/70">Disque vide</span>
+        )}
+      </button>
+
+      {filled && (
+        <div className="flex flex-wrap justify-center gap-1.5">
+          <button type="button" onClick={onMoveLeft} className="rounded-lg border px-2 py-1 text-xs font-black hover:bg-accent">
+            ←
+          </button>
+          <button type="button" onClick={onClear} className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-black text-destructive hover:bg-destructive/10">
+            <X className="h-3.5 w-3.5" />
+            Retirer
+          </button>
+          <button type="button" onClick={onMoveRight} className="rounded-lg border px-2 py-1 text-xs font-black hover:bg-accent">
+            →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompactOrderCard({
+  job,
+  pizzas,
+  selectedIds,
+  reorderJobId,
+  dragJobId,
+  dropTarget,
+  onSelectPizza,
+  onSelectWholeJob,
+  onStartReorder,
+  onCancelReorder,
+  onDelete,
+  onSendBread,
+  onDragStart,
+  onDragEnd,
+  onDrop,
+  onDragOver,
+  onDropZoneClick,
+}: {
+  job: PizzaioloQueueJob;
+  pizzas: Pizza[];
+  selectedIds: Set<string>;
+  reorderJobId: string | null;
+  dragJobId: string | null;
+  dropTarget: { jobId: string; placement: "before" | "after" } | null;
+  onSelectPizza: (job: PizzaioloQueueJob, item: OrderItem) => void;
+  onSelectWholeJob: (job: PizzaioloQueueJob) => void;
+  onStartReorder: (jobId: string) => void;
+  onCancelReorder: () => void;
+  onDelete: () => void;
+  onSendBread: () => void;
+  onDragStart: (event: DragEvent<HTMLElement>, jobId: string) => void;
+  onDragEnd: () => void;
+  onDrop: (event: DragEvent<HTMLElement>, targetJobId: string, placement: "before" | "after") => void;
+  onDragOver: (jobId: string, placement: "before" | "after") => void;
+  onDropZoneClick: (targetJobId: string, placement: "before" | "after") => void;
+}) {
+  const isReordering = reorderJobId === job.id;
+  const isDragging = dragJobId === job.id;
+  const paninos = job.paninos;
+  const breadCount = paninos.filter((item) => item.product_key === "panino").length;
+  const fishCount = paninos.filter((item) => item.product_key === "fishno").length;
+  const friesCount = paninos.filter((item) => item.product_key === "cornet_frites").length;
+  const pendingBread = job.orders.some((order) => {
+    const orderBreadCount = paninos.filter((item) => item.order_id === order.id && item.product_key === "panino").length;
+    return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
+  });
+
+  return (
+    <div className={reorderJobId ? "space-y-2" : ""}>
+      <QueueDropZone
+        active={!!reorderJobId && reorderJobId !== job.id}
+        highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "before"}
+        label={`Deposer avant ${job.customer_name}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          onDragOver(job.id, "before");
+        }}
+        onDrop={(event) => onDrop(event, job.id, "before")}
+        onClick={() => onDropZoneClick(job.id, "before")}
+      />
+
+      <article
+        draggable={isReordering}
+        onDragStart={(event) => onDragStart(event, job.id)}
+        onDragEnd={onDragEnd}
+        className={`rounded-2xl border bg-background p-3 shadow-sm transition ${
+          isReordering ? "ring-4 ring-primary/40" : ""
+        } ${isDragging ? "opacity-50" : ""}`}
+      >
+        <header className="mb-2 flex items-start justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => onSelectWholeJob(job)}
+            className="min-w-0 text-left"
+            title="Ajouter toutes les pizzas possibles au plan de travail"
+          >
+            <div className="flex items-center gap-1.5 text-base font-black">
+              <User className="h-4 w-4 shrink-0" />
+              <span className="truncate">{job.customer_name}</span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1 text-xs font-bold text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />
+              {formatTime(job.requested_time)}
+              {job.orders.length > 1 && <span>· {job.orders.length} tickets</span>}
+            </div>
+          </button>
+
+          <div className="flex shrink-0 items-center gap-1">
+            {isReordering && (
+              <button
+                type="button"
+                draggable
+                onDragStart={(event) => onDragStart(event, job.id)}
+                className="rounded-full bg-primary/15 p-2 text-primary"
+                aria-label="Poignee pour deplacer la commande"
+              >
+                <GripVertical className="h-4 w-4" />
+              </button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="rounded-full bg-muted p-2 text-muted-foreground hover:bg-muted/80" aria-label="Menu de la commande">
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuItem onSelect={() => (isReordering ? onCancelReorder() : onStartReorder(job.id))}>
+                  <ArrowUpDown className="mr-2 h-4 w-4" />
+                  {isReordering ? "Terminer la reorganisation" : "Reorganiser la commande"}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Supprimer la commande
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+
+        {job.items.length > 0 && (
+          <ul className="space-y-1.5">
+            {job.items.map((item) => {
+              const selected = selectedIds.has(item.id);
+              const base = getPizzaBaseInfo(item, pizzas);
+              return (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectPizza(job, item)}
+                    className={`w-full rounded-xl border px-2.5 py-2 text-left transition ${
+                      selected ? "border-primary bg-primary/10" : "bg-card hover:border-primary/40 hover:bg-primary/5"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className={`mt-0.5 h-5 w-5 shrink-0 rounded-md border-2 ${selected ? "border-primary bg-primary" : "border-muted-foreground/40"}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-black leading-tight">{item.pizza_name}</span>
+                          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase ${base.badgeClassName}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${base.dotClassName}`} />
+                            {base.label}
+                          </span>
+                        </div>
+                        {item.extras.length > 0 && <div className="truncate text-xs font-semibold text-secondary">+ {item.extras.join(", ")}</div>}
+                        {item.removed.length > 0 && <div className="truncate text-xs font-semibold text-destructive">Sans {item.removed.join(", ")}</div>}
+                        {item.cut_into && <div className="text-xs font-black text-primary">A couper en {item.cut_into}</div>}
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {(breadCount > 0 || fishCount > 0 || friesCount > 0) && (
+          <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs font-bold text-primary">
+            <div className="flex flex-wrap gap-2">
+              {breadCount > 0 && <span className="inline-flex items-center gap-1"><Sandwich className="h-3.5 w-3.5" />{breadCount} pain{breadCount > 1 ? "s" : ""}</span>}
+              {fishCount > 0 && <span className="inline-flex items-center gap-1"><Fish className="h-3.5 w-3.5" />{fishCount} Fish</span>}
+              {friesCount > 0 && <span className="inline-flex items-center gap-1"><Utensils className="h-3.5 w-3.5" />{friesCount} frites</span>}
+            </div>
+            {pendingBread && (
+              <button type="button" onClick={onSendBread} className="mt-2 rounded-lg bg-primary px-2 py-1 text-[11px] font-black text-primary-foreground">
+                Pain Pani'NO au four
+              </button>
+            )}
+          </div>
+        )}
+      </article>
+
+      <QueueDropZone
+        active={!!reorderJobId && reorderJobId !== job.id}
+        highlighted={dropTarget?.jobId === job.id && dropTarget.placement === "after"}
+        label={`Deposer apres ${job.customer_name}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          onDragOver(job.id, "after");
+        }}
+        onDrop={(event) => onDrop(event, job.id, "after")}
+        onClick={() => onDropZoneClick(job.id, "after")}
+      />
+    </div>
+  );
+}
+
 function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-2xl border-2 border-dashed p-12 text-center text-muted-foreground">{text}</div>;
+  return <div className="rounded-2xl border-2 border-dashed p-8 text-center text-sm font-semibold text-muted-foreground">{text}</div>;
 }
 
 function QueueDropZone({
@@ -649,4 +914,58 @@ function QueueDropZone({
       {label}
     </div>
   );
+}
+
+function buildSuggestion(items: QueuePizza[], freeCount: number) {
+  if (items.length === 0 || freeCount <= 0) {
+    return { items: [] as QueuePizza[], base: getFallbackBase(), label: "Aucune pizza disponible" };
+  }
+
+  const groups = new Map<string, QueuePizza[]>();
+  for (const item of items) {
+    const group = groups.get(item.base.key) ?? [];
+    group.push(item);
+    groups.set(item.base.key, group);
+  }
+
+  const bestGroup = Array.from(groups.values()).sort((a, b) => b.length - a.length)[0] ?? items;
+  const picked = bestGroup.slice(0, Math.min(4, freeCount));
+  if (picked.length < Math.min(4, freeCount)) {
+    picked.push(...items.filter((item) => !picked.some((candidate) => candidate.item.id === item.item.id)).slice(0, Math.min(4, freeCount) - picked.length));
+  }
+
+  return {
+    items: picked,
+    base: picked[0]?.base ?? getFallbackBase(),
+    label: summarizeSelection(picked.map((entry) => entry.item)),
+  };
+}
+
+function summarizeSelection(items: OrderItem[]) {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item.pizza_name, (counts.get(item.pizza_name) ?? 0) + 1);
+  return Array.from(counts.entries())
+    .map(([name, count]) => `${count} ${name}`)
+    .join(" · ");
+}
+
+function getFallbackBase(): PizzaBaseInfo {
+  return {
+    key: "speciale",
+    label: "Base",
+    ringClassName: "border-primary/50",
+    badgeClassName: "bg-primary/10 text-primary border-primary/30",
+    dotClassName: "bg-primary",
+  };
+}
+
+function uniqueOrders(orders: Order[]) {
+  const byId = new Map<string, Order>();
+  for (const order of orders) byId.set(order.id, order);
+  return Array.from(byId.values());
+}
+
+function createBatchId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `00000000-0000-4000-8000-${Date.now().toString().padStart(12, "0").slice(-12)}`;
 }
