@@ -22,6 +22,7 @@ import {
 import { KDS_AUTH_KEY, verifyKdsCredentials } from "@/lib/kds-auth";
 import { useSettings } from "@/hooks/use-kds-data";
 import type { SystemMode } from "@/lib/kds-types";
+import herSalinLogoUrl from "@/assets/her-salin-logo.png";
 
 export const Route = createFileRoute("/_kds")({
   component: KdsLayout,
@@ -113,11 +114,13 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
       <FullscreenPrompt />
       <header className="sticky top-0 z-30 border-b bg-card shadow-sm">
         <div className="flex items-center gap-2 px-4 py-2">
-          <Link to="/" className="flex items-center gap-2 mr-4 font-bold text-lg">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Pizza className="h-5 w-5" />
-            </span>
-            <span>Her Salin</span>
+          <Link
+            to="/"
+            aria-label="Retour à l’accueil"
+            title="Retour à l’accueil"
+            className="group mr-2 inline-flex min-h-12 shrink-0 items-center rounded-xl px-1.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80 sm:mr-4"
+          >
+            <KdsHeaderLogo />
           </Link>
           <SystemModeBadge mode={mode} />
           <DesktopNav logout={logout} />
@@ -128,6 +131,18 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function KdsHeaderLogo({ className = "" }: { className?: string }) {
+  return (
+    <img
+      src={herSalinLogoUrl}
+      alt=""
+      aria-hidden="true"
+      className={`h-11 w-auto max-w-[9.75rem] rounded-lg object-contain sm:h-12 sm:max-w-[10.75rem] ${className}`}
+      draggable={false}
+    />
   );
 }
 
@@ -265,14 +280,9 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-sm space-y-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Pizza className="h-5 w-5" />
-          </span>
-          <div>
-            <h1 className="text-lg font-bold leading-tight">Her Salin</h1>
-            <p className="text-xs text-muted-foreground">Accès restreint</p>
-          </div>
+        <div className="mb-2 flex flex-col items-center gap-2 text-center">
+          <KdsHeaderLogo className="h-16 max-w-[15rem]" />
+          <p className="text-xs font-medium text-muted-foreground">Accès restreint au KDS</p>
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Identifiant</label>
