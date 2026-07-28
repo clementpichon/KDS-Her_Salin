@@ -113,12 +113,12 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
     <div className="min-h-[100dvh] flex flex-col bg-background">
       <FullscreenPrompt />
       <header className="sticky top-0 z-30 border-b bg-card shadow-sm">
-        <div className="flex items-center gap-2 px-4 py-2">
+        <div className="flex items-center gap-2 px-4 py-1">
           <Link
             to="/"
             aria-label="Retour à l’accueil"
             title="Retour à l’accueil"
-            className="group mr-2 inline-flex min-h-12 shrink-0 items-center rounded-xl px-1.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80 sm:mr-4"
+            className="group mr-2 inline-flex min-h-16 shrink-0 items-center rounded-xl px-1.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80 sm:mr-4"
           >
             <KdsHeaderLogo />
           </Link>
@@ -140,7 +140,7 @@ function KdsHeaderLogo({ className = "" }: { className?: string }) {
       src={herSalinLogoUrl}
       alt=""
       aria-hidden="true"
-      className={`h-11 w-auto max-w-[9.75rem] rounded-lg object-contain sm:h-12 sm:max-w-[10.75rem] ${className}`}
+      className={`h-auto w-[8.5rem] max-w-none rounded-lg object-contain sm:w-[9.5rem] lg:w-[10rem] ${className}`}
       draggable={false}
     />
   );
@@ -281,7 +281,7 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
     <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-sm space-y-4">
         <div className="mb-2 flex flex-col items-center gap-2 text-center">
-          <KdsHeaderLogo className="h-16 max-w-[15rem]" />
+          <KdsHeaderLogo className="w-[15rem] sm:w-[16rem]" />
           <p className="text-xs font-medium text-muted-foreground">Accès restreint au KDS</p>
         </div>
         <div className="space-y-1">
