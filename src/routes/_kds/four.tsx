@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { useOrders, useSettings, usePaninoOrderItems } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { computeStock, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel } from "@/lib/kds-formatting";
 import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
@@ -72,6 +71,8 @@ function Four() {
       if (!isOrderActive(o)) return false;
       const hasPizzaItemsInOven = (o.items ?? []).some((item) => pizzaProductionStatus(item, o) === "in_oven");
       if (hasPizzaItemsInOven) return true;
+      const hasPizzaItemsAtFour = o.status !== "ready" && (o.items ?? []).some((item) => pizzaProductionStatus(item, o) === "ready");
+      if (hasPizzaItemsAtFour) return true;
       if (o.status === "in_oven") return true;
       // commandes pain-only ou pains pas encore cuits
       const bread = breadCountByOrder.get(o.id) ?? 0;
@@ -83,21 +84,40 @@ function Four() {
     [orders, paninoItems],
   );
 
-  const markReady = async (id: string, batchId: string | null) => {
-    const busyKey = ovenBatchKey(id, batchId);
+  const markReady = async (id: string) => {
+    const busyKey = `pizzas-${id}`;
     if (busyIds.has(busyKey)) return;
     const order = list.find((candidate) => candidate.id === id);
-    const pizzaItems = (order?.items ?? [])
-      .filter((item) => pizzaProductionStatus(item, order) === "in_oven")
-      .filter((item) => (item.oven_batch_id ?? null) === batchId);
-    const unfinishedPizzaItems = pizzaItems.filter((item) => !item.prepared);
+    const pizzaItems = order?.items ?? [];
+    const pendingPizzaItems = pizzaItems.filter((item) => pizzaProductionStatus(item, order) === "to_prepare");
+    const inOvenPizzaItems = pizzaItems.filter((item) => pizzaProductionStatus(item, order) === "in_oven");
 
     setBusyIds((prev) => new Set(prev).add(busyKey));
-    if (unfinishedPizzaItems.length > 0) {
+    if (!order || pizzaItems.length === 0) {
+      toast.error("Commande introuvable");
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+      return;
+    }
+
+    if (pendingPizzaItems.length > 0) {
+      toast.warning("Commande incomplète : toutes les pizzas ne sont pas encore arrivées au four.");
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(busyKey);
+        return next;
+      });
+      return;
+    }
+
+    if (inOvenPizzaItems.length > 0) {
       const { error: itemsError } = await supabase
         .from("order_items")
         .update({ prepared: true, production_status: "ready", ready_at: new Date().toISOString() })
-        .in("id", unfinishedPizzaItems.map((item) => item.id));
+        .in("id", inOvenPizzaItems.map((item) => item.id));
       if (itemsError) {
         toast.error("Impossible de finaliser toutes les pizzas");
         setBusyIds((prev) => {
@@ -108,7 +128,7 @@ function Four() {
         return;
       }
       void Promise.all(
-        unfinishedPizzaItems.map((item) =>
+        inOvenPizzaItems.map((item) =>
           logProductionEvent({
             settings,
             eventType: "PIZZA_FINISHED",
@@ -123,18 +143,11 @@ function Four() {
       );
     }
 
-    const orderAfterBatch = order;
-    const remainingPizzaWork = (orderAfterBatch?.items ?? []).some((item) => {
-      if (pizzaItems.some((pizza) => pizza.id === item.id)) return false;
-      const status = pizzaProductionStatus(item, orderAfterBatch);
-      return status === "to_prepare" || status === "in_oven";
-    });
     const orderPaninos = paninoItems.filter((item) => item.order_id === id);
     const allPaninosDone = orderPaninos.every((item) => item.status === "done");
-    const nextOrderStatus = remainingPizzaWork ? "to_prepare" : "ready";
-    const { error } = await supabase.from("orders").update({ status: nextOrderStatus }).eq("id", id);
+    const { error } = await supabase.from("orders").update({ status: "ready" }).eq("id", id);
     if (error) toast.error("Impossible de passer les pizzas en prêtes");
-    else if (!remainingPizzaWork && allPaninosDone) {
+    else if (allPaninosDone) {
       void logProductionEvent({
         settings,
         eventType: "ORDER_READY",
@@ -142,8 +155,6 @@ function Four() {
         orderId: id,
         productType: "order",
       });
-    } else if (remainingPizzaWork) {
-      toast.success("Fournée prête — pizzas restantes au pizzaiolo");
     } else {
       toast.success("Pizzas prêtes — attente du poste Pani'NO");
     }
@@ -173,43 +184,6 @@ function Four() {
       next.delete(`pains-${id}`);
       return next;
     });
-  };
-  const toggleItemPrepared = async (itemId: string, prepared: boolean) => {
-    const order = list.find((candidate) => (candidate.items ?? []).some((item) => item.id === itemId));
-    const item = (order?.items ?? []).find((candidate) => candidate.id === itemId);
-    const { error } = await supabase
-      .from("order_items")
-      .update({
-        prepared,
-        production_status: prepared ? "ready" : "in_oven",
-        ready_at: prepared ? new Date().toISOString() : null,
-      })
-      .eq("id", itemId);
-    if (!error && order) {
-      if (!prepared) {
-        void supabase.from("orders").update({ status: "in_oven" }).eq("id", order.id);
-      } else {
-        const remainingPizzaWork = (order.items ?? []).some((candidate) => {
-          if (candidate.id === itemId) return false;
-          const status = pizzaProductionStatus(candidate, order);
-          return status === "to_prepare" || status === "in_oven";
-        });
-        if (!remainingPizzaWork) {
-          void supabase.from("orders").update({ status: "ready" }).eq("id", order.id);
-        }
-      }
-    }
-    if (!error && prepared) {
-      void logProductionEvent({
-        settings,
-        eventType: "PIZZA_FINISHED",
-        station: "four",
-        orderId: item?.order_id ?? null,
-        orderItemId: itemId,
-        productType: "pizza",
-        productName: item?.pizza_name ?? null,
-      });
-    }
   };
   const loseDough = async () => {
     if (!settings) return;
@@ -254,10 +228,14 @@ function Four() {
               {ordersAt.map((o) => {
           const focused = focusedIds.has(o.id);
           const breadCount = breadCountByOrder.get(o.id) ?? 0;
+          const pizzaItems = o.items ?? [];
           const pizzaItemsInOven = (o.items ?? []).filter((item) => pizzaProductionStatus(item, o) === "in_oven");
-          const pizzaBatches = groupPizzaItemsByBatch(o.id, pizzaItemsInOven);
-          const hasPizzas = pizzaBatches.length > 0;
-          const pizzasInOven = hasPizzas;
+          const pizzaItemsReady = (o.items ?? []).filter((item) => pizzaProductionStatus(item, o) === "ready");
+          const pizzaItemsPending = (o.items ?? []).filter((item) => pizzaProductionStatus(item, o) === "to_prepare");
+          const hasPizzas = pizzaItems.length > 0;
+          const pizzasAlreadyReady = o.status === "ready";
+          const canCompletePizzas = hasPizzas && !pizzasAlreadyReady && pizzaItemsPending.length === 0;
+          const pizzasBusy = busyIds.has(`pizzas-${o.id}`);
           const painsToCook = breadCount > 0 && o.pains_panino_status === "en_cours";
           const painsBusy = busyIds.has(`pains-${o.id}`);
           return (
@@ -284,7 +262,9 @@ function Four() {
                   >
                     {focused ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
-                  <div className="rounded-full bg-status-oven/15 text-status-oven px-3 py-1 text-sm font-bold">AU FOUR</div>
+                  <div className="rounded-full bg-status-oven/15 text-status-oven px-3 py-1 text-sm font-bold">
+                    {pizzasAlreadyReady ? "PIZZAS PRÊTES" : canCompletePizzas ? "COMPLÈTE" : `${pizzaItemsInOven.length + pizzaItemsReady.length}/${pizzaItems.length} AU FOUR`}
+                  </div>
                 </div>
               </header>
               {o.notes && (
@@ -292,48 +272,57 @@ function Four() {
                   📝 {o.notes}
                 </div>
               )}
-              {hasPizzas && pizzasInOven && (
+              {hasPizzas && (
                 <>
-                  <div className="mb-1 text-xs font-bold uppercase text-muted-foreground">Pizzas à cuire</div>
-                  <div className="mb-3 space-y-3">
-                    {pizzaBatches.map((batch, batchIndex) => {
-                      const pizzasBusy = busyIds.has(batch.id);
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold uppercase text-muted-foreground">
+                    <span>Commande pizzas</span>
+                    {pizzaItemsPending.length > 0 && (
+                      <span className="normal-case text-muted-foreground">
+                        {pizzaItemsPending.length} pizza{pizzaItemsPending.length > 1 ? "s" : ""} à venir
+                      </span>
+                    )}
+                  </div>
+                  <ul className="mb-3 space-y-2">
+                    {pizzaItems.map((it) => {
+                      const status = pizzaProductionStatus(it, o);
+                      const pending = status === "to_prepare";
+                      const ready = status === "ready";
                       return (
-                        <div key={batch.id} className="rounded-xl border bg-background/70 p-2.5">
-                          {pizzaBatches.length > 1 && (
-                            <div className="mb-2 rounded-full bg-status-oven/10 px-2 py-1 text-xs font-black text-status-oven">
-                              Fournée {batchIndex + 1} · {batch.items.length} pizza{batch.items.length > 1 ? "s" : ""}
-                            </div>
-                          )}
-                          <ul className="space-y-2">
-                            {batch.items.map((it) => (
-                              <li
-                                key={it.id}
-                                className={`flex items-start gap-3 rounded-lg border bg-background p-2 transition ${it.prepared ? "opacity-60" : ""}`}
-                              >
-                                <Checkbox
-                                  checked={it.prepared}
-                                  onCheckedChange={(c) => toggleItemPrepared(it.id, !!c)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  aria-label="Marquer comme cuit"
-                                  className="mt-1 h-6 w-6"
-                                />
-                                <div className="flex-1">
-                                  <div className={`font-semibold ${it.prepared ? "line-through" : ""}`}>{it.pizza_name}</div>
-                                  {it.extras.length > 0 && <div className="text-xs text-secondary">+ {it.extras.join(", ")}</div>}
-                                  {it.removed.length > 0 && <div className="text-xs text-destructive">– sans {it.removed.join(", ")}</div>}
-                                  {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                          <Button onClick={(e) => { e.stopPropagation(); markReady(o.id, batch.batchId); }} disabled={pizzasBusy} className="mt-2 w-full h-12 text-base font-bold bg-status-ready hover:bg-status-ready/90">
-                            <PackageCheck className="mr-2 h-5 w-5" /> {pizzasBusy ? "Validation…" : "Fournée prête"}
-                          </Button>
-                        </div>
+                        <li
+                          key={it.id}
+                          className={`flex items-start gap-3 rounded-lg border p-2 transition ${
+                            pending
+                              ? "border-muted bg-muted/30 text-muted-foreground opacity-70"
+                              : ready
+                                ? "border-status-ready/30 bg-status-ready/5"
+                                : "border-status-oven/40 bg-background"
+                          }`}
+                        >
+                          <span
+                            aria-hidden
+                            className={`mt-1.5 h-3.5 w-3.5 shrink-0 rounded-full ${
+                              pending ? "border-2 border-muted-foreground/50 bg-transparent" : ready ? "bg-status-ready" : "bg-status-oven"
+                            }`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className={`font-semibold ${pending ? "" : "text-foreground"}`}>{it.pizza_name}</div>
+                            {it.extras.length > 0 && <div className="text-xs text-secondary">+ {it.extras.join(", ")}</div>}
+                            {it.removed.length > 0 && <div className="text-xs text-destructive">– sans {it.removed.join(", ")}</div>}
+                            {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
+                            pending
+                              ? "bg-muted text-muted-foreground"
+                              : ready
+                                ? "bg-status-ready/15 text-status-ready"
+                                : "bg-status-oven/15 text-status-oven"
+                          }`}>
+                            {pending ? "À venir" : ready ? "Sortie" : "Au four"}
+                          </span>
+                        </li>
                       );
                     })}
-                  </div>
+                  </ul>
                 </>
               )}
               {painsToCook && (
@@ -358,6 +347,16 @@ function Four() {
                 </div>
               )}
               <div className="flex flex-col gap-2">
+                {hasPizzas && !pizzasAlreadyReady && (
+                  <Button onClick={(e) => { e.stopPropagation(); markReady(o.id); }} disabled={pizzasBusy || !canCompletePizzas} className="w-full h-12 text-base font-bold bg-status-ready hover:bg-status-ready/90">
+                    <PackageCheck className="mr-2 h-5 w-5" />
+                    {pizzasBusy
+                      ? "Validation…"
+                      : canCompletePizzas
+                        ? "Commande terminée"
+                        : `Commande incomplète (${pizzaItemsInOven.length + pizzaItemsReady.length}/${pizzaItems.length})`}
+                  </Button>
+                )}
                 {painsToCook && (
                   <Button onClick={(e) => { e.stopPropagation(); markPainsReady(o.id); }} disabled={painsBusy} className="w-full h-12 text-base font-black bg-primary hover:bg-primary/90">
                     <Sandwich className="mr-2 h-5 w-5" /> {painsBusy ? "Validation…" : `Pains cuits — libérer Pani'NO (${breadCount})`}
@@ -384,38 +383,6 @@ type PizzaSummary = {
   removed: string[];
   cut_into: number | null;
 };
-
-type OvenPizzaBatch = {
-  id: string;
-  batchId: string | null;
-  items: OrderItem[];
-};
-
-function ovenBatchKey(orderId: string, batchId: string | null) {
-  return `${orderId}:${batchId ?? "legacy"}`;
-}
-
-function groupPizzaItemsByBatch(orderId: string, items: OrderItem[]): OvenPizzaBatch[] {
-  const batches = new Map<string, OvenPizzaBatch>();
-
-  for (const item of items) {
-    const batchId = item.oven_batch_id ?? null;
-    const id = ovenBatchKey(orderId, batchId);
-    const batch = batches.get(id);
-    if (batch) {
-      batch.items.push(item);
-      continue;
-    }
-
-    batches.set(id, { id, batchId, items: [item] });
-  }
-
-  return Array.from(batches.values()).sort((a, b) => {
-    const aSentAt = a.items[0]?.sent_to_oven_at ?? "";
-    const bSentAt = b.items[0]?.sent_to_oven_at ?? "";
-    return aSentAt.localeCompare(bSentAt);
-  });
-}
 
 function UpcomingPizzaioloPreview({
   jobs,
