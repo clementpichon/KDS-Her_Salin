@@ -41,7 +41,8 @@ import {
 import { computeStock, formatTime } from "@/lib/scheduling";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPaninoItemsByOrder, buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
-import { getPizzaBaseInfo, getPizzaDisplayDetails, pizzaProductionStatus, type PizzaBaseInfo, type PizzaDisplayDetails } from "@/lib/pizza-production";
+import { buildSmartBatchPlan, type PlannedPizza } from "@/lib/pizzaiolo-batch-planner";
+import { getPizzaBaseInfo, getPizzaDisplayDetails, pizzaProductionStatus, type PizzaDisplayDetails } from "@/lib/pizza-production";
 import type { Order, OrderItem, Pizza } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
@@ -61,12 +62,6 @@ type WorkbenchSlot = {
   id: number;
   item: OrderItem | null;
   job: PizzaioloQueueJob | null;
-};
-
-type QueuePizza = {
-  item: OrderItem;
-  job: PizzaioloQueueJob;
-  base: PizzaBaseInfo;
 };
 
 function createInitialSlots(): WorkbenchSlot[] {
@@ -93,15 +88,10 @@ function Pizzaiolo() {
   const selectedSlots = slots.filter((slot) => slot.item && slot.job);
   const freeCount = slots.filter((slot) => !slot.item).length;
 
-  const queuePizzas = useMemo<QueuePizza[]>(() => {
-    return list.flatMap((job) =>
-      job.items
-        .filter((item) => !selectedIds.has(item.id))
-        .map((item) => ({ item, job, base: getPizzaBaseInfo(item, pizzas) })),
-    );
-  }, [list, pizzas, selectedIds]);
-
-  const suggestion = useMemo(() => buildSuggestion(queuePizzas, Math.max(1, freeCount)), [queuePizzas, freeCount]);
+  const suggestion = useMemo(
+    () => buildSmartBatchPlan({ jobs: list, pizzas, selectedIds, capacity: freeCount }),
+    [list, pizzas, selectedIds, freeCount],
+  );
 
   const saveManualQueueOrder = async (orderedJobs: PizzaioloQueueJob[]) => {
     const updates = orderedJobs.flatMap((job, index) => {
@@ -246,39 +236,7 @@ function Pizzaiolo() {
     setActiveSlotId(targetSlot.id);
   };
 
-  const selectWholeJob = (job: PizzaioloQueueJob) => {
-    const available = job.items.filter((item) => !selectedIds.has(item.id));
-    if (available.length === 0) return;
-    const openSlots = slots.filter((slot) => !slot.item);
-    if (openSlots.length === 0) {
-      toast.warning("Aucun disque libre pour ajouter cette commande");
-      return;
-    }
-
-    const picked = available.slice(0, openSlots.length);
-    setSlots((current) => {
-      const next = current.map((slot) => ({ ...slot }));
-      let cursor = 0;
-      for (const slot of next) {
-        if (slot.item) continue;
-        const item = picked[cursor];
-        if (!item) break;
-        slot.item = item;
-        slot.job = job;
-        cursor += 1;
-      }
-      return next;
-    });
-
-    if (available.length > picked.length) {
-      toast.warning(`${available.length - picked.length} pizza(s) restent dans la commande`);
-    } else {
-      toast.success("Commande ajoutee au plan de travail");
-    }
-  };
-
-  const applySuggestion = () => {
-    if (suggestion.items.length === 0) return;
+  const placePlannedPizzas = (planned: PlannedPizza[]) => {
     const openSlots = slots.filter((slot) => !slot.item);
     if (openSlots.length === 0) {
       toast.warning("Aucun disque libre");
@@ -290,14 +248,49 @@ function Pizzaiolo() {
       let cursor = 0;
       for (const slot of next) {
         if (slot.item) continue;
-        const suggested = suggestion.items[cursor];
-        if (!suggested) break;
-        slot.item = suggested.item;
-        slot.job = suggested.job;
+        const entry = planned[cursor];
+        if (!entry) break;
+        slot.item = entry.item;
+        slot.job = entry.job;
         cursor += 1;
       }
       return next;
     });
+  };
+
+  const selectWholeJob = (job: PizzaioloQueueJob) => {
+    const available = job.items.filter((item) => !selectedIds.has(item.id));
+    if (available.length === 0) return;
+    const openSlots = slots.filter((slot) => !slot.item);
+    if (openSlots.length === 0) {
+      toast.warning("Aucun disque libre pour ajouter cette commande");
+      return;
+    }
+
+    const plan = buildSmartBatchPlan({
+      jobs: list,
+      pizzas,
+      selectedIds,
+      capacity: openSlots.length,
+      preferredJobId: job.id,
+    });
+    if (plan.items.length === 0) return;
+
+    placePlannedPizzas(plan.items);
+
+    const selectedFromJob = plan.items.filter((entry) => entry.job.id === job.id).length;
+    if (available.length > selectedFromJob) {
+      toast.warning(`${available.length - selectedFromJob} pizza(s) restent pour une prochaine fournee`);
+    } else if (plan.fillCount > 0) {
+      toast.success(`Commande ajoutee et fournee completee avec ${plan.fillCount} pizza(s) suivante(s)`);
+    } else {
+      toast.success("Commande ajoutee au plan de travail");
+    }
+  };
+
+  const applySuggestion = () => {
+    if (suggestion.items.length === 0) return;
+    placePlannedPizzas(suggestion.items);
     toast.success("Suggestion placee sur le plan de travail");
   };
 
@@ -500,7 +493,17 @@ function Pizzaiolo() {
                     <span className={`rounded-full border px-2 py-1 text-xs font-black ${suggestion.base.badgeClassName}`}>
                       Base {suggestion.base.label}
                     </span>
+                    <span className={`rounded-full px-2 py-1 text-xs font-black ${
+                      suggestion.isFull ? "bg-status-ready/15 text-status-ready" : "bg-muted text-muted-foreground"
+                    }`}>
+                      {suggestion.items.length}/{freeCount} disques
+                    </span>
                     <span className="font-semibold text-muted-foreground">{suggestion.label}</span>
+                    {suggestion.fillCount > 0 && (
+                      <span className="text-xs font-bold text-primary">
+                        + {suggestion.fillCount} pizza{suggestion.fillCount > 1 ? "s" : ""} commande suivante
+                      </span>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm font-semibold text-muted-foreground">Aucune suggestion disponible.</p>
@@ -728,6 +731,14 @@ function CompactOrderCard({
   const breadCount = paninos.filter((item) => item.product_key === "panino").length;
   const fishCount = paninos.filter((item) => item.product_key === "fishno").length;
   const friesCount = paninos.filter((item) => item.product_key === "cornet_frites").length;
+  const selectedPizzaCount = job.items.filter((item) => selectedIds.has(item.id)).length;
+  const allPizzasSelected = job.items.length > 0 && selectedPizzaCount === job.items.length;
+  const selectionLabel =
+    selectedPizzaCount === 0
+      ? null
+      : allPizzasSelected
+        ? "Commande sélectionnée"
+        : `${selectedPizzaCount}/${job.items.length} sélectionnée`;
   const pendingBread = job.orders.some((order) => {
     const orderBreadCount = paninos.filter((item) => item.order_id === order.id && item.product_key === "panino").length;
     return orderBreadCount > 0 && (!order.pains_panino_status || order.pains_panino_status === "a_preparer");
@@ -755,54 +766,71 @@ function CompactOrderCard({
           isReordering ? "ring-4 ring-primary/40" : ""
         } ${isDragging ? "opacity-50" : ""}`}
       >
-        <header className="mb-2 flex items-start justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => onSelectWholeJob(job)}
-            className="min-w-0 text-left"
-            title="Ajouter toutes les pizzas possibles au plan de travail"
-          >
+        <header className="mb-2 space-y-2">
+          <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-1.5 text-base font-black">
               <User className="h-4 w-4 shrink-0" />
               <span className="truncate">{job.customer_name}</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-1 text-xs font-bold text-muted-foreground">
+
+            <div className="flex shrink-0 items-center gap-1">
+              {isReordering && (
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={(event) => onDragStart(event, job.id)}
+                  className="rounded-full bg-primary/15 p-2 text-primary"
+                  aria-label="Poignee pour deplacer la commande"
+                >
+                  <GripVertical className="h-4 w-4" />
+                </button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className="rounded-full bg-muted p-2 text-muted-foreground hover:bg-muted/80" aria-label="Menu de la commande">
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuItem onSelect={() => (isReordering ? onCancelReorder() : onStartReorder(job.id))}>
+                    <ArrowUpDown className="mr-2 h-4 w-4" />
+                    {isReordering ? "Terminer la reorganisation" : "Reorganiser la commande"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Supprimer la commande
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1 text-xs font-bold text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               {formatTime(job.requested_time)}
               {job.orders.length > 1 && <span>· {job.orders.length} tickets</span>}
+              {selectionLabel && (
+                <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
+                  allPizzasSelected ? "bg-primary/15 text-primary" : "bg-status-oven/10 text-status-oven"
+                }`}>
+                  {selectionLabel}
+                </span>
+              )}
             </div>
-          </button>
-
-          <div className="flex shrink-0 items-center gap-1">
-            {isReordering && (
-              <button
+            {job.items.length > 0 && (
+              <Button
                 type="button"
-                draggable
-                onDragStart={(event) => onDragStart(event, job.id)}
-                className="rounded-full bg-primary/15 p-2 text-primary"
-                aria-label="Poignee pour deplacer la commande"
+                variant={selectedPizzaCount > 0 ? "secondary" : "default"}
+                size="sm"
+                onClick={() => onSelectWholeJob(job)}
+                disabled={allPizzasSelected}
+                className="h-8 px-2 text-xs font-black"
               >
-                <GripVertical className="h-4 w-4" />
-              </button>
+                Tout sélectionner
+              </Button>
             )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button type="button" className="rounded-full bg-muted p-2 text-muted-foreground hover:bg-muted/80" aria-label="Menu de la commande">
-                  <MoreVertical className="h-4 w-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuItem onSelect={() => (isReordering ? onCancelReorder() : onStartReorder(job.id))}>
-                  <ArrowUpDown className="mr-2 h-4 w-4" />
-                  {isReordering ? "Terminer la reorganisation" : "Reorganiser la commande"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onDelete}>
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Supprimer la commande
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </header>
 
@@ -914,49 +942,6 @@ function QueueDropZone({
       {label}
     </div>
   );
-}
-
-function buildSuggestion(items: QueuePizza[], freeCount: number) {
-  if (items.length === 0 || freeCount <= 0) {
-    return { items: [] as QueuePizza[], base: getFallbackBase(), label: "Aucune pizza disponible" };
-  }
-
-  const groups = new Map<string, QueuePizza[]>();
-  for (const item of items) {
-    const group = groups.get(item.base.key) ?? [];
-    group.push(item);
-    groups.set(item.base.key, group);
-  }
-
-  const bestGroup = Array.from(groups.values()).sort((a, b) => b.length - a.length)[0] ?? items;
-  const picked = bestGroup.slice(0, Math.min(4, freeCount));
-  if (picked.length < Math.min(4, freeCount)) {
-    picked.push(...items.filter((item) => !picked.some((candidate) => candidate.item.id === item.item.id)).slice(0, Math.min(4, freeCount) - picked.length));
-  }
-
-  return {
-    items: picked,
-    base: picked[0]?.base ?? getFallbackBase(),
-    label: summarizeSelection(picked.map((entry) => entry.item)),
-  };
-}
-
-function summarizeSelection(items: OrderItem[]) {
-  const counts = new Map<string, number>();
-  for (const item of items) counts.set(item.pizza_name, (counts.get(item.pizza_name) ?? 0) + 1);
-  return Array.from(counts.entries())
-    .map(([name, count]) => `${count} ${name}`)
-    .join(" · ");
-}
-
-function getFallbackBase(): PizzaBaseInfo {
-  return {
-    key: "unknown",
-    label: "Base à vérifier",
-    ringClassName: "border-primary/50",
-    badgeClassName: "bg-primary/10 text-primary border-primary/30",
-    dotClassName: "bg-primary",
-  };
 }
 
 function uniqueOrders(orders: Order[]) {
