@@ -40,7 +40,14 @@ import {
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
 import { isOrderActive } from "@/lib/order-status";
-import { getPizzaBaseInfo, getPizzaBaseInfoFromText, PIZZA_BASE_OPTIONS } from "@/lib/pizza-production";
+import {
+  getDefaultPizzaBaseKey,
+  getPizzaBaseInfoFromText,
+  getPizzaDisplayDetails,
+  inferRequestedBase,
+  PIZZA_BASE_OPTIONS,
+  type PizzaBaseKey,
+} from "@/lib/pizza-production";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
 import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
@@ -147,14 +154,7 @@ function Caisse() {
         if (!pizza) { unknown.push(it.pizza_name); continue; }
         const cut = it.cut_into && [4, 6, 8].includes(it.cut_into) ? it.cut_into : null;
         for (let i = 0; i < Math.max(1, it.quantity); i++) {
-          added.push({
-            pizza_id: pizza.id,
-            pizza_name: pizza.name,
-            base: getPizzaBaseInfoFromText(it.base)?.label ?? getDefaultPizzaBaseLabel(pizza),
-            extras: it.extras ?? [],
-            removed: it.removed ?? [],
-            cut_into: cut,
-          });
+          added.push(buildPizzaDraftItem(pizza, getPizzaBaseInfoFromText(it.base)?.key ?? null, it.extras ?? [], it.removed ?? [], cut));
         }
       }
 
@@ -272,6 +272,10 @@ function Caisse() {
           pizza_id: c.pizza_id,
           pizza_name: c.pizza_name,
           base: c.base ?? null,
+          default_base_snapshot: c.default_base_snapshot ?? null,
+          explicit_base_snapshot: c.explicit_base_snapshot ?? null,
+          base_resolution: c.base_resolution ?? null,
+          base_confidence: c.base_confidence ?? null,
           extras: c.extras,
           removed: c.removed,
           cut_into: c.cut_into ?? null,
@@ -280,17 +284,31 @@ function Caisse() {
         if (itemsError) {
           if (!isMissingOrderItemBaseColumn(itemsError)) throw itemsError;
 
-          const legacyItems = cart.map((c) => ({
+          const baseOnlyItems = cart.map((c) => ({
             order_id: order.id,
             pizza_id: c.pizza_id,
             pizza_name: c.pizza_name,
+            base: c.base ?? null,
             extras: c.extras,
             removed: c.removed,
             cut_into: c.cut_into ?? null,
           }));
-          const { error: legacyItemsError } = await supabase.from("order_items").insert(legacyItems);
-          if (legacyItemsError) throw legacyItemsError;
-          toast.warning("Commande créée. Migration Supabase à appliquer pour mémoriser les bases pizzas.");
+          const { error: baseOnlyError } = await supabase.from("order_items").insert(baseOnlyItems);
+          if (baseOnlyError) {
+            if (!isMissingOrderItemBaseColumn(baseOnlyError)) throw baseOnlyError;
+
+            const legacyItems = cart.map((c) => ({
+              order_id: order.id,
+              pizza_id: c.pizza_id,
+              pizza_name: c.pizza_name,
+              extras: c.extras,
+              removed: c.removed,
+              cut_into: c.cut_into ?? null,
+            }));
+            const { error: legacyItemsError } = await supabase.from("order_items").insert(legacyItems);
+            if (legacyItemsError) throw legacyItemsError;
+          }
+          toast.warning("Commande créée. Migration Supabase à appliquer pour mémoriser toute la résolution des bases pizzas.");
         }
       }
 
@@ -525,22 +543,25 @@ function Caisse() {
             </div>
           ) : (
             <ul className="max-h-56 space-y-2 overflow-auto pr-1">
-              {cart.map((c, idx) => (
-                <li key={`p-${idx}`} className="rounded-lg border bg-background p-2 text-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="font-semibold">🍕 {c.pizza_name}</div>
-                      {c.base && <div className="text-xs">Base : {c.base}</div>}
-                      {c.extras.length > 0 && <div className="text-xs text-secondary">+ {c.extras.join(", ")}</div>}
-                      {c.removed.length > 0 && <div className="text-xs text-destructive">– {c.removed.join(", ")}</div>}
-                      {c.cut_into && <div className="text-xs font-semibold text-primary">À couper en {c.cut_into}</div>}
+              {cart.map((c, idx) => {
+                const display = getPizzaDisplayDetails(c, pizzas);
+                return (
+                  <li key={`p-${idx}`} className="rounded-lg border bg-background p-2 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="font-semibold">🍕 {c.pizza_name}</div>
+                        <div className="text-xs">Base : {display.base.label}</div>
+                        {display.extras.length > 0 && <div className="text-xs text-secondary">+ {display.extras.join(", ")}</div>}
+                        {display.removed.length > 0 && <div className="text-xs text-destructive">– {display.removed.join(", ")}</div>}
+                        {c.cut_into && <div className="text-xs font-semibold text-primary">À couper en {c.cut_into}</div>}
+                      </div>
+                      <Button size="icon" variant="ghost" aria-label="Supprimer" className="h-7 w-7" onClick={() => setCart(cart.filter((_, i) => i !== idx))}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <Button size="icon" variant="ghost" aria-label="Supprimer" className="h-7 w-7" onClick={() => setCart(cart.filter((_, i) => i !== idx))}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
               {paninoCart.map((p, idx) => (
                 <li key={`pn-${idx}`} className="rounded-lg border bg-background p-2 text-sm">
                   <div className="flex items-start justify-between gap-2">
@@ -898,18 +919,19 @@ function PizzaCustomizer({
   onClose: () => void;
   onAdd: (item: DraftItem) => void;
 }) {
-  const defaultBase = getDefaultPizzaBaseLabel(pizza);
-  const [base, setBase] = useState<string | null>(defaultBase);
+  const defaultBase = pizza ? getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]) : "unknown";
+  const selectableDefaultBase = defaultBase === "none" || defaultBase === "unknown" ? null : defaultBase;
+  const [base, setBase] = useState<PizzaBaseKey | null>(selectableDefaultBase);
   const [extras, setExtras] = useState<string[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
   const [cutInto, setCutInto] = useState<number | null>(null);
 
   useEffect(() => {
-    setBase(defaultBase);
+    setBase(selectableDefaultBase);
     setExtras([]);
     setRemoved([]);
     setCutInto(null);
-  }, [pizza?.id, defaultBase]);
+  }, [pizza?.id, selectableDefaultBase]);
 
   if (!pizza) return null;
 
@@ -925,7 +947,7 @@ function PizzaCustomizer({
         <div className="space-y-4">
           <Section title="Base demandée">
             {PIZZA_BASE_OPTIONS.map((option) => (
-              <Chip key={option.key} active={base === option.label} onClick={() => setBase(option.label)}>
+              <Chip key={option.key} active={base === option.key} onClick={() => setBase(option.key)}>
                 {option.label}
               </Chip>
             ))}
@@ -975,7 +997,7 @@ function PizzaCustomizer({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Annuler</Button>
-          <Button onClick={() => onAdd({ pizza_id: pizza.id, pizza_name: pizza.name, base, extras, removed, cut_into: cutInto })} className="h-11">
+          <Button onClick={() => onAdd(buildPizzaDraftItem(pizza, base !== defaultBase ? base : null, extras, removed, cutInto))} className="h-11">
             <Plus className="mr-2 h-4 w-4" /> Ajouter au panier
           </Button>
         </DialogFooter>
@@ -1002,10 +1024,33 @@ function isMissingOrderItemBaseColumn(error: unknown) {
   return text.includes("base") && (text.includes("column") || text.includes("schema cache") || text.includes("pgrst204"));
 }
 
-function getDefaultPizzaBaseLabel(pizza: Pizza | null) {
-  if (!pizza) return null;
-  const base = getPizzaBaseInfo({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]);
-  return base.key === "speciale" ? null : base.label;
+function buildPizzaDraftItem(
+  pizza: Pizza,
+  explicitBase: PizzaBaseKey | null,
+  extras: string[],
+  removed: string[],
+  cutInto: number | null,
+): DraftItem {
+  const defaultBase = getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]);
+  const inference = inferRequestedBase({
+    defaultBase,
+    explicitBase,
+    additions: extras,
+    removals: removed,
+  });
+
+  return {
+    pizza_id: pizza.id,
+    pizza_name: pizza.name,
+    base: inference.requestedBase,
+    default_base_snapshot: inference.defaultBase,
+    explicit_base_snapshot: explicitBase,
+    base_resolution: inference.baseResolution,
+    base_confidence: inference.baseConfidence,
+    extras,
+    removed,
+    cut_into: cutInto,
+  };
 }
 
 function toLocalInput(d: Date) {

@@ -85,6 +85,7 @@ PIZZAS :
 - Choisis le nom exact dans le catalogue pizzas.
 - Quantité (ex: "2x Regina") → "quantity".
 - Si une base pizza est mentionnée (ex: "base crème", "base tomate"), choisis-la EXACTEMENT parmi les bases pizzas proposées → "base".
+- Si le ticket indique seulement des lignes "+ crème", "+ sauce tomate", "- sauce tomate" ou "- crème de chèvre", ne remplis PAS "base" : conserve ces lignes dans "extras" et "removed". Le KDS déduira la base ensuite.
 - "sans X" / "no X" → "removed". "+ X" / "supp X" / "extra X" → "extras".
 - Découpage manuscrit ("à couper en 4/6/8", "/8") → "cut_into" (4, 6 ou 8). Si la mention concerne toute la commande, applique-la à toutes les pizzas.
 

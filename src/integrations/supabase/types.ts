@@ -38,8 +38,12 @@ export type Database = {
       order_items: {
         Row: {
           base: string | null
+          base_confidence: number | null
+          base_resolution: string | null
           created_at: string
           cut_into: number | null
+          default_base_snapshot: string | null
+          explicit_base_snapshot: string | null
           extras: string[]
           id: string
           order_id: string
@@ -54,8 +58,12 @@ export type Database = {
         }
         Insert: {
           base?: string | null
+          base_confidence?: number | null
+          base_resolution?: string | null
           created_at?: string
           cut_into?: number | null
+          default_base_snapshot?: string | null
+          explicit_base_snapshot?: string | null
           extras?: string[]
           id?: string
           order_id: string
@@ -70,8 +78,12 @@ export type Database = {
         }
         Update: {
           base?: string | null
+          base_confidence?: number | null
+          base_resolution?: string | null
           created_at?: string
           cut_into?: number | null
+          default_base_snapshot?: string | null
+          explicit_base_snapshot?: string | null
           extras?: string[]
           id?: string
           order_id?: string
@@ -264,6 +276,7 @@ export type Database = {
         Row: {
           active: boolean
           created_at: string
+          default_base: string | null
           id: string
           image_path: string | null
           ingredients: string[]
@@ -273,6 +286,7 @@ export type Database = {
         Insert: {
           active?: boolean
           created_at?: string
+          default_base?: string | null
           id?: string
           image_path?: string | null
           ingredients?: string[]
@@ -282,6 +296,7 @@ export type Database = {
         Update: {
           active?: boolean
           created_at?: string
+          default_base?: string | null
           id?: string
           image_path?: string | null
           ingredients?: string[]

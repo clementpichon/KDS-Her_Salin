@@ -26,3 +26,26 @@ Validation attendue :
 - vérifier que le disque du Pizzaiolo affiche bien `Tomate` ;
 - envoyer au Four puis vérifier que la commande conserve la même base ;
 - rafraîchir la page et vérifier que la base reste mémorisée après application de la migration.
+
+## Étape 1.1 - Résolution métier des bases depuis L'Addition
+
+Objectif : une base pizza n'est pas seulement une valeur saisie explicitement. Elle peut être déduite des ajouts et retraits imprimés sur un ticket L'Addition.
+
+Règles :
+
+- `Regina` : base finale `tomato`, résolution `default` ;
+- `Regina + crème` : base finale `tomato`, la crème reste un supplément ;
+- `Regina - sauce tomate + crème` : base finale `cream`, résolution `inferred_replacement`, les deux lignes ne sont plus réaffichées comme supplément/retrait ;
+- `Regina - sauce tomate` : base finale `none`, affichage `Sans base` ;
+- `Fromages + sauce tomate` : base finale `goat_cream`, la tomate reste un supplément ;
+- `Regina - sauce tomate + crème + crème de chèvre` : résolution `ambiguous`, affichage `Base à vérifier`.
+
+Champs utilisés :
+
+- `order_items.base` : base finale calculée ;
+- `order_items.default_base_snapshot` : base recette au moment de la commande ;
+- `order_items.explicit_base_snapshot` : base explicitement saisie ou lue, si elle existe ;
+- `order_items.base_resolution` : méthode de résolution ;
+- `order_items.base_confidence` : niveau de confiance.
+
+Les tableaux bruts `extras` et `removed` restent conservés en base. L'interface filtre seulement les lignes consommées par une résolution de remplacement.

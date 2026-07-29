@@ -41,7 +41,7 @@ import {
 import { computeStock, formatTime } from "@/lib/scheduling";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPaninoItemsByOrder, buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
-import { getPizzaBaseInfo, pizzaProductionStatus, type PizzaBaseInfo } from "@/lib/pizza-production";
+import { getPizzaBaseInfo, getPizzaDisplayDetails, pizzaProductionStatus, type PizzaBaseInfo, type PizzaDisplayDetails } from "@/lib/pizza-production";
 import type { Order, OrderItem, Pizza } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
@@ -480,7 +480,7 @@ function Pizzaiolo() {
                   key={slot.id}
                   slot={slot}
                   active={activeSlotId === slot.id}
-                  base={slot.item ? getPizzaBaseInfo(slot.item, pizzas) : null}
+                  details={slot.item ? getPizzaDisplayDetails(slot.item, pizzas) : null}
                   onSelect={() => setActiveSlotId(slot.id)}
                   onClear={() => clearSlot(slot.id)}
                   onMoveLeft={() => moveSlot(slot.id, -1)}
@@ -615,7 +615,7 @@ function Pizzaiolo() {
 function WorkbenchDisc({
   slot,
   active,
-  base,
+  details,
   onSelect,
   onClear,
   onMoveLeft,
@@ -623,7 +623,7 @@ function WorkbenchDisc({
 }: {
   slot: WorkbenchSlot;
   active: boolean;
-  base: PizzaBaseInfo | null;
+  details: PizzaDisplayDetails | null;
   onSelect: () => void;
   onClear: () => void;
   onMoveLeft: () => void;
@@ -637,7 +637,7 @@ function WorkbenchDisc({
         type="button"
         onClick={onSelect}
         className={`relative flex aspect-square w-full max-w-[18rem] flex-col items-center justify-center rounded-full border-[6px] bg-background p-5 text-center shadow-inner transition ${
-          filled ? base?.ringClassName ?? "border-primary/50" : "border-dashed border-muted-foreground/35"
+          filled ? details?.base.ringClassName ?? "border-primary/50" : "border-dashed border-muted-foreground/35"
         } ${active ? "ring-4 ring-primary/30" : "hover:ring-4 hover:ring-primary/10"}`}
         aria-label={filled ? `Disque ${slot.id + 1}, ${slot.item?.pizza_name}` : `Disque ${slot.id + 1} vide`}
       >
@@ -648,16 +648,16 @@ function WorkbenchDisc({
           <>
             <div className="text-lg font-black leading-tight sm:text-2xl">{slot.job.customer_name}</div>
             <div className="mt-1 text-base font-black leading-tight text-primary sm:text-xl">{slot.item.pizza_name}</div>
-            {base && (
-              <span className={`mt-3 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-black uppercase ${base.badgeClassName}`}>
-                <span className={`h-2 w-2 rounded-full ${base.dotClassName}`} />
-                {base.label}
+            {details && (
+              <span className={`mt-3 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-black uppercase ${details.base.badgeClassName}`}>
+                <span className={`h-2 w-2 rounded-full ${details.base.dotClassName}`} />
+                {details.base.label}
               </span>
             )}
-            {(slot.item.extras.length > 0 || slot.item.removed.length > 0 || slot.item.cut_into) && (
+            {details && (details.extras.length > 0 || details.removed.length > 0 || slot.item.cut_into) && (
               <div className="mt-2 max-w-full text-xs font-semibold text-muted-foreground">
-                {slot.item.extras.length > 0 && <div className="truncate text-secondary">+ {slot.item.extras.join(", ")}</div>}
-                {slot.item.removed.length > 0 && <div className="truncate text-destructive">Sans {slot.item.removed.join(", ")}</div>}
+                {details.extras.length > 0 && <div className="truncate text-secondary">+ {details.extras.join(", ")}</div>}
+                {details.removed.length > 0 && <div className="truncate text-destructive">Sans {details.removed.join(", ")}</div>}
                 {slot.item.cut_into && <div className="font-black text-primary">A couper en {slot.item.cut_into}</div>}
               </div>
             )}
@@ -810,7 +810,7 @@ function CompactOrderCard({
           <ul className="space-y-1.5">
             {job.items.map((item) => {
               const selected = selectedIds.has(item.id);
-              const base = getPizzaBaseInfo(item, pizzas);
+              const details = getPizzaDisplayDetails(item, pizzas);
               return (
                 <li key={item.id}>
                   <button
@@ -825,13 +825,13 @@ function CompactOrderCard({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <span className="font-black leading-tight">{item.pizza_name}</span>
-                          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase ${base.badgeClassName}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${base.dotClassName}`} />
-                            {base.label}
+                          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase ${details.base.badgeClassName}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${details.base.dotClassName}`} />
+                            {details.base.label}
                           </span>
                         </div>
-                        {item.extras.length > 0 && <div className="truncate text-xs font-semibold text-secondary">+ {item.extras.join(", ")}</div>}
-                        {item.removed.length > 0 && <div className="truncate text-xs font-semibold text-destructive">Sans {item.removed.join(", ")}</div>}
+                        {details.extras.length > 0 && <div className="truncate text-xs font-semibold text-secondary">+ {details.extras.join(", ")}</div>}
+                        {details.removed.length > 0 && <div className="truncate text-xs font-semibold text-destructive">Sans {details.removed.join(", ")}</div>}
                         {item.cut_into && <div className="text-xs font-black text-primary">A couper en {item.cut_into}</div>}
                       </div>
                     </div>
@@ -951,8 +951,8 @@ function summarizeSelection(items: OrderItem[]) {
 
 function getFallbackBase(): PizzaBaseInfo {
   return {
-    key: "speciale",
-    label: "Base",
+    key: "unknown",
+    label: "Base à vérifier",
     ringClassName: "border-primary/50",
     badgeClassName: "bg-primary/10 text-primary border-primary/30",
     dotClassName: "bg-primary",

@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Copy, PackageCheck, Clock, User, HandCoins, Eye, EyeOff, Sandwich, PhoneCall } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useOrders, usePaninoOrderItems } from "@/hooks/use-kds-data";
+import { useOrders, usePaninoOrderItems, usePizzas } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { CashierStationHeader } from "@/components/kds/CashierStationHeader";
@@ -10,6 +10,7 @@ import { formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber } from "@/lib/phone-utils";
 import { isOrderActive } from "@/lib/order-status";
+import { getPizzaDisplayDetails } from "@/lib/pizza-production";
 import type { PaninoOrderItem } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pretes")({
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/_kds/pretes")({
 function Pretes() {
   const { orders, reload: reloadOrders } = useOrders();
   const { items: paninoItems } = usePaninoOrderItems();
+  const pizzas = usePizzas();
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [deliveredIds, setDeliveredIds] = useState<Set<string>>(new Set());
@@ -176,15 +178,18 @@ function Pretes() {
               )}
               {(o.items?.length ?? 0) > 0 && (
                 <ul className="mb-3 space-y-1">
-                  {o.items?.map((it) => (
-                    <li key={it.id} className="text-sm">
-                      <span className="font-semibold">{it.pizza_name}</span>
-                      {it.base && <span className="text-muted-foreground"> · base {it.base}</span>}
-                      {it.extras.length > 0 && <span className="text-secondary"> + {it.extras.join(", ")}</span>}
-                      {it.removed.length > 0 && <span className="text-destructive"> – sans {it.removed.join(", ")}</span>}
-                      {it.cut_into && <span className="font-bold text-primary"> · à couper en {it.cut_into}</span>}
-                    </li>
-                  ))}
+                  {o.items?.map((it) => {
+                    const details = getPizzaDisplayDetails(it, pizzas);
+                    return (
+                      <li key={it.id} className="text-sm">
+                        <span className="font-semibold">{it.pizza_name}</span>
+                        <span className="text-muted-foreground"> · base {details.base.label}</span>
+                        {details.extras.length > 0 && <span className="text-secondary"> + {details.extras.join(", ")}</span>}
+                        {details.removed.length > 0 && <span className="text-destructive"> – sans {details.removed.join(", ")}</span>}
+                        {it.cut_into && <span className="font-bold text-primary"> · à couper en {it.cut_into}</span>}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {paninos.length > 0 && (

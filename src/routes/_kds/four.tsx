@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, ClipboardList, Flame, Minus, Clock, User, PackageCheck, Eye, EyeOff, Sandwich, Scissors } from "lucide-react";
 import { toast } from "sonner";
 import { useMemo, useState } from "react";
-import { useOrders, useSettings, usePaninoOrderItems } from "@/hooks/use-kds-data";
+import { useOrders, useSettings, usePaninoOrderItems, usePizzas } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { computeStock, formatTime, isLate } from "@/lib/scheduling";
@@ -11,8 +11,8 @@ import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
 import { isOrderActive } from "@/lib/order-status";
-import { pizzaProductionStatus } from "@/lib/pizza-production";
-import type { OrderItem, PaninoOrderItem } from "@/lib/kds-types";
+import { getPizzaDisplayDetails, pizzaProductionStatus } from "@/lib/pizza-production";
+import type { OrderItem, PaninoOrderItem, Pizza } from "@/lib/kds-types";
 
 
 export const Route = createFileRoute("/_kds/four")({
@@ -32,6 +32,7 @@ function Four() {
   const { orders } = useOrders();
   const settings = useSettings();
   const { items: paninoItems } = usePaninoOrderItems();
+  const pizzas = usePizzas();
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
@@ -207,6 +208,7 @@ function Four() {
 
       <UpcomingPizzaioloPreview
         jobs={upcomingPizzaioloJobs}
+        pizzas={pizzas}
         open={previewOpen}
         onToggle={() => setPreviewOpen((current) => !current)}
       />
@@ -287,6 +289,7 @@ function Four() {
                       const status = pizzaProductionStatus(it, o);
                       const pending = status === "to_prepare";
                       const ready = status === "ready";
+                      const details = getPizzaDisplayDetails(it, pizzas);
                       return (
                         <li
                           key={it.id}
@@ -306,9 +309,9 @@ function Four() {
                           />
                           <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${pending ? "" : "text-foreground"}`}>{it.pizza_name}</div>
-                            {it.base && <div className="text-xs font-semibold text-muted-foreground">Base : {it.base}</div>}
-                            {it.extras.length > 0 && <div className="text-xs text-secondary">+ {it.extras.join(", ")}</div>}
-                            {it.removed.length > 0 && <div className="text-xs text-destructive">– sans {it.removed.join(", ")}</div>}
+                            <div className="text-xs font-semibold text-muted-foreground">Base : {details.base.label}</div>
+                            {details.extras.length > 0 && <div className="text-xs text-secondary">+ {details.extras.join(", ")}</div>}
+                            {details.removed.length > 0 && <div className="text-xs text-destructive">– sans {details.removed.join(", ")}</div>}
                             {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
                           </div>
                           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
@@ -388,10 +391,12 @@ type PizzaSummary = {
 
 function UpcomingPizzaioloPreview({
   jobs,
+  pizzas,
   open,
   onToggle,
 }: {
   jobs: PizzaioloQueueJob[];
+  pizzas: Pizza[];
   open: boolean;
   onToggle: () => void;
 }) {
@@ -431,7 +436,7 @@ function UpcomingPizzaioloPreview({
           ) : (
             <div className="mt-3 grid gap-2 md:grid-cols-3">
               {jobs.map((job, index) => (
-                <PreviewJobCard key={job.id} job={job} position={index + 1} />
+                <PreviewJobCard key={job.id} job={job} pizzas={pizzas} position={index + 1} />
               ))}
             </div>
           )}
@@ -441,8 +446,8 @@ function UpcomingPizzaioloPreview({
   );
 }
 
-function PreviewJobCard({ job, position }: { job: PizzaioloQueueJob; position: number }) {
-  const pizzaSummaries = summarizePizzas(job.items);
+function PreviewJobCard({ job, pizzas, position }: { job: PizzaioloQueueJob; pizzas: Pizza[]; position: number }) {
+  const pizzaSummaries = summarizePizzas(job.items, pizzas);
   const postCookingCount = job.items.filter((item) => item.cut_into).length;
   const breadCount = job.paninos.filter((item) => item.product_key === "panino").length;
 
@@ -504,13 +509,14 @@ function PreviewJobCard({ job, position }: { job: PizzaioloQueueJob; position: n
   );
 }
 
-function summarizePizzas(items: OrderItem[]): PizzaSummary[] {
+function summarizePizzas(items: OrderItem[], pizzas: Pizza[]): PizzaSummary[] {
   const summaries = new Map<string, PizzaSummary>();
 
   for (const item of items) {
-    const extras = [...item.extras].sort();
-    const removed = [...item.removed].sort();
-    const key = [item.pizza_name, item.base ?? "", extras.join("|"), removed.join("|"), item.cut_into ?? ""].join("::");
+    const details = getPizzaDisplayDetails(item, pizzas);
+    const extras = [...details.extras].sort();
+    const removed = [...details.removed].sort();
+    const key = [item.pizza_name, details.base.key, extras.join("|"), removed.join("|"), item.cut_into ?? ""].join("::");
     const summary = summaries.get(key);
     if (summary) {
       summary.count += 1;
@@ -520,7 +526,7 @@ function summarizePizzas(items: OrderItem[]): PizzaSummary[] {
     summaries.set(key, {
       key,
       pizza_name: item.pizza_name,
-      base: item.base ?? null,
+      base: details.base.label,
       count: 1,
       extras,
       removed,

@@ -6,6 +6,7 @@ export interface Pizza {
   id: string;
   name: string;
   ingredients: string[];
+  default_base?: string | null;
   image_path: string | null;
   sort_order: number;
   active: boolean;
@@ -57,6 +58,10 @@ export interface OrderItem {
   pizza_id: string | null;
   pizza_name: string;
   base?: string | null;
+  default_base_snapshot?: string | null;
+  explicit_base_snapshot?: string | null;
+  base_resolution?: string | null;
+  base_confidence?: number | null;
   extras: string[];
   removed: string[];
   prepared: boolean;
@@ -98,6 +103,10 @@ export interface DraftItem {
   pizza_id: string;
   pizza_name: string;
   base?: string | null;
+  default_base_snapshot?: string | null;
+  explicit_base_snapshot?: string | null;
+  base_resolution?: string | null;
+  base_confidence?: number | null;
   extras: string[];
   removed: string[];
   cut_into?: number | null;
