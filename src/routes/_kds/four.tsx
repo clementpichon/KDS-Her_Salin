@@ -7,7 +7,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { computeStock, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel } from "@/lib/kds-formatting";
-import { TimeSlotGroup } from "@/components/kds/TimeSlotGroup";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
 import { isOrderActive } from "@/lib/order-status";
@@ -194,15 +193,15 @@ function Four() {
 
 
   return (
-    <div className="p-4">
-      <div className="mb-4 flex items-center justify-between rounded-2xl border bg-card p-4 shadow-sm">
-        <h1 className="text-xl font-bold flex items-center gap-2"><Flame className="text-status-oven" /> Four — En cuisson ({list.length})</h1>
+    <div className="p-3 md:p-4">
+      <div className="mb-3 flex items-center justify-between rounded-xl border bg-card px-3 py-3 shadow-sm md:px-4">
+        <h1 className="flex items-center gap-2 text-lg font-black md:text-xl"><Flame className="text-status-oven" /> Four — En cuisson ({list.length})</h1>
         <div className="flex items-center gap-3">
           <div className="text-right">
             <div className="text-[10px] uppercase text-muted-foreground">Pâtons</div>
             <div className={`text-xl font-bold ${stock < 20 ? "text-destructive" : "text-secondary"}`}>{stock}</div>
           </div>
-          <Button variant="outline" onClick={loseDough}><Minus className="mr-1 h-4 w-4" />1 pâton</Button>
+          <Button variant="outline" onClick={loseDough} className="h-10"><Minus className="mr-1 h-4 w-4" />1 pâton</Button>
         </div>
       </div>
 
@@ -213,21 +212,11 @@ function Four() {
         onToggle={() => setPreviewOpen((current) => !current)}
       />
 
-      {list.length === 0 && <div className="rounded-2xl border-2 border-dashed p-12 text-center text-muted-foreground">Four vide</div>}
+      {list.length === 0 && <div className="rounded-xl border border-dashed p-10 text-center text-sm font-semibold text-muted-foreground">Four vide</div>}
 
-      {(() => {
-        const groups = new Map<string, typeof list>();
-        for (const o of list) {
-          const t = formatTime(o.requested_time);
-          const arr = groups.get(t) ?? [];
-          arr.push(o);
-          groups.set(t, arr);
-        }
-        const entries = Array.from(groups.entries());
-        return entries.map(([time, ordersAt]) => (
-          <TimeSlotGroup key={time} time={time} count={ordersAt.length} accentClass="border-status-oven/40">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {ordersAt.map((o) => {
+      {list.length > 0 && (
+        <div className="grid items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {list.map((o) => {
           const focused = focusedIds.has(o.id);
           const breadCount = breadCountByOrder.get(o.id) ?? 0;
           const pizzaItems = o.items ?? [];
@@ -240,51 +229,80 @@ function Four() {
           const pizzasBusy = busyIds.has(`pizzas-${o.id}`);
           const painsToCook = breadCount > 0 && o.pains_panino_status === "en_cours";
           const painsBusy = busyIds.has(`pains-${o.id}`);
+          const late = isLate(o.requested_time);
+          const cardTone = late
+            ? "border-orange-400/60 bg-orange-500/[0.03]"
+            : canCompletePizzas
+              ? "border-status-ready/45 bg-status-ready/[0.03]"
+              : pizzaItemsInOven.length > 0 || painsToCook
+                ? "border-status-oven/35 bg-card"
+                : "border-border bg-card";
+          const statusChip = pizzasAlreadyReady
+            ? "bg-status-ready/15 text-status-ready"
+            : canCompletePizzas
+              ? "bg-status-ready text-white"
+              : "bg-status-oven/10 text-status-oven";
+          const statusLabel = pizzasAlreadyReady
+            ? "Pizzas prêtes"
+            : canCompletePizzas
+              ? "À valider"
+              : hasPizzas
+                ? `${pizzaItemsInOven.length + pizzaItemsReady.length}/${pizzaItems.length} au four`
+                : "Pains au four";
           return (
             <article
               key={o.id}
               onClick={() => toggleFocus(o.id)}
-              className={`rounded-2xl border-2 border-status-oven bg-card p-4 shadow-sm cursor-pointer transition ${
+              className={`cursor-pointer rounded-xl border p-3 shadow-sm transition ${cardTone} ${
                 focused
-                  ? "ring-4 ring-primary shadow-xl scale-[1.01] bg-primary/5 md:col-span-2 xl:col-span-2 z-10"
+                  ? "z-10 scale-[1.01] bg-primary/5 shadow-xl ring-4 ring-primary/25 lg:col-span-2"
                   : ""
               }`}
             >
-              <header className="mb-3 flex items-start justify-between">
-                <div>
-                  <h2 className="flex items-center gap-2 text-lg font-bold"><User className="h-5 w-5" /> {o.customer_name}</h2>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground"><Clock className="h-4 w-4" />Pour {formatTime(o.requested_time)}{isLate(o.requested_time) && <span className="rounded bg-orange-500/15 px-1.5 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-400">En retard</span>}</div>
+              <header className="mb-2 flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs font-black text-muted-foreground">
+                      <Clock className="h-3.5 w-3.5" />
+                      {formatTime(o.requested_time)}
+                    </span>
+                    {late && <span className="rounded-md bg-orange-500/15 px-1.5 py-0.5 text-[11px] font-black uppercase text-orange-600 dark:text-orange-400">Retard</span>}
+                  </div>
+                  <h2 className="mt-1 flex min-w-0 items-center gap-1.5 truncate text-lg font-black">
+                    <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{o.customer_name}</span>
+                  </h2>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); toggleFocus(o.id); }}
-                    className={`rounded-full p-1.5 transition ${focused ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+                    className={`rounded-full p-1.5 transition ${focused ? "bg-primary text-primary-foreground" : "bg-muted/70 text-muted-foreground hover:bg-muted"}`}
                     aria-label={focused ? "Désélectionner" : "Mettre en évidence"}
                     title={focused ? "Désélectionner" : "Mettre en évidence"}
                   >
                     {focused ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
-                  <div className="rounded-full bg-status-oven/15 text-status-oven px-3 py-1 text-sm font-bold">
-                    {pizzasAlreadyReady ? "PIZZAS PRÊTES" : canCompletePizzas ? "COMPLÈTE" : `${pizzaItemsInOven.length + pizzaItemsReady.length}/${pizzaItems.length} AU FOUR`}
+                  <div className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${statusChip}`}>
+                    {statusLabel}
                   </div>
                 </div>
               </header>
               {o.notes && (
-                <div className="mb-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-semibold text-primary">
-                  📝 {o.notes}
+                <div className="mb-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs font-semibold text-primary">
+                  Note : {o.notes}
                 </div>
               )}
               {hasPizzas && (
                 <>
-                  <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold uppercase text-muted-foreground">
-                    <span>Commande pizzas</span>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-black uppercase text-muted-foreground">
+                    <span>Pizzas</span>
                     {pizzaItemsPending.length > 0 && (
                       <span className="normal-case text-muted-foreground">
                         {pizzaItemsPending.length} pizza{pizzaItemsPending.length > 1 ? "s" : ""} à venir
                       </span>
                     )}
                   </div>
-                  <ul className="mb-3 space-y-2">
+                  <ul className="mb-2 overflow-hidden rounded-lg border bg-background/70">
                     {pizzaItems.map((it) => {
                       const status = pizzaProductionStatus(it, o);
                       const pending = status === "to_prepare";
@@ -293,26 +311,32 @@ function Four() {
                       return (
                         <li
                           key={it.id}
-                          className={`flex items-start gap-3 rounded-lg border p-2 transition ${
+                          className={`flex items-start gap-2 border-b px-2.5 py-1.5 transition last:border-b-0 ${
                             pending
-                              ? "border-muted bg-muted/30 text-muted-foreground opacity-70"
+                              ? "bg-muted/30 text-muted-foreground opacity-70"
                               : ready
-                                ? "border-status-ready/30 bg-status-ready/5"
-                                : "border-status-oven/40 bg-background"
+                                ? "bg-status-ready/5"
+                                : "bg-background"
                           }`}
                         >
                           <span
                             aria-hidden
-                            className={`mt-1.5 h-3.5 w-3.5 shrink-0 rounded-full ${
+                            className={`mt-1.5 h-3 w-3 shrink-0 rounded-full ${
                               pending ? "border-2 border-muted-foreground/50 bg-transparent" : ready ? "bg-status-ready" : "bg-status-oven"
                             }`}
                           />
                           <div className="min-w-0 flex-1">
-                            <div className={`font-semibold ${pending ? "" : "text-foreground"}`}>{it.pizza_name}</div>
-                            <div className="text-xs font-semibold text-muted-foreground">Base : {details.base.label}</div>
-                            {details.extras.length > 0 && <div className="text-xs text-secondary">+ {details.extras.join(", ")}</div>}
-                            {details.removed.length > 0 && <div className="text-xs text-destructive">– sans {details.removed.join(", ")}</div>}
-                            {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className={`font-bold leading-tight ${pending ? "" : "text-foreground"}`}>{it.pizza_name}</span>
+                              <span className="text-[11px] font-semibold text-muted-foreground">Base {details.base.label}</span>
+                              {it.cut_into && <span className="text-[11px] font-black text-primary">À couper en {it.cut_into}</span>}
+                            </div>
+                            {(details.extras.length > 0 || details.removed.length > 0) && (
+                              <div className="mt-0.5 text-xs font-semibold leading-snug">
+                                {details.extras.length > 0 && <span className="text-secondary">+ {details.extras.join(", ")}</span>}
+                                {details.removed.length > 0 && <span className="text-destructive">{details.extras.length > 0 ? " · " : ""}Sans {details.removed.join(", ")}</span>}
+                              </div>
+                            )}
                           </div>
                           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${
                             pending
@@ -330,17 +354,19 @@ function Four() {
                 </>
               )}
               {painsToCook && (
-                <div className="mb-3">
-                  <div className="mb-1 text-xs font-bold uppercase text-muted-foreground">Pains Pani'NO à cuire</div>
-                  <div className="rounded-lg border-2 border-primary/40 bg-primary/10 p-3 flex items-center gap-2 text-primary font-bold">
-                    <Sandwich className="h-5 w-5" /> {breadCount} pain{breadCount > 1 ? "s" : ""} à cuire
+                <div className="mb-2 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
+                  <div className="flex items-center justify-between gap-2 text-primary">
+                    <div className="flex items-center gap-2 text-sm font-black">
+                      <Sandwich className="h-4 w-4" /> {breadCount} pain{breadCount > 1 ? "s" : ""} Pani'NO
+                    </div>
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-black uppercase">À cuire</span>
                   </div>
-                  <div className="mt-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary">
-                    Signal Pani'NO : dès validation, le poste peut assembler les Pani'NO en attente.
+                  <div className="mt-1 text-xs font-semibold text-primary/80">
+                    Valider libère le poste Pani'NO.
                   </div>
                   <ul className="mt-2 space-y-1">
                     {(paninoItemsByOrder.get(o.id) ?? []).map((it) => (
-                      <li key={it.id} className="flex items-center justify-between rounded border bg-background px-2 py-1 text-sm">
+                      <li key={it.id} className="flex items-center justify-between rounded-md border bg-background px-2 py-1 text-sm">
                         <span className="font-semibold">{it.product_name}</span>
                         {friesLabel(it.fries_mode) && (
                           <span className="text-xs font-bold text-primary">{friesLabel(it.fries_mode)}</span>
@@ -352,8 +378,8 @@ function Four() {
               )}
               <div className="flex flex-col gap-2">
                 {hasPizzas && !pizzasAlreadyReady && (
-                  <Button onClick={(e) => { e.stopPropagation(); markReady(o.id); }} disabled={pizzasBusy || !canCompletePizzas} className="w-full h-12 text-base font-bold bg-status-ready hover:bg-status-ready/90">
-                    <PackageCheck className="mr-2 h-5 w-5" />
+                  <Button onClick={(e) => { e.stopPropagation(); markReady(o.id); }} disabled={pizzasBusy || !canCompletePizzas} className="h-10 w-full bg-status-ready text-sm font-black hover:bg-status-ready/90">
+                    <PackageCheck className="mr-2 h-4 w-4" />
                     {pizzasBusy
                       ? "Validation…"
                       : canCompletePizzas
@@ -362,19 +388,16 @@ function Four() {
                   </Button>
                 )}
                 {painsToCook && (
-                  <Button onClick={(e) => { e.stopPropagation(); markPainsReady(o.id); }} disabled={painsBusy} className="w-full h-12 text-base font-black bg-primary hover:bg-primary/90">
-                    <Sandwich className="mr-2 h-5 w-5" /> {painsBusy ? "Validation…" : `Pains cuits — libérer Pani'NO (${breadCount})`}
+                  <Button onClick={(e) => { e.stopPropagation(); markPainsReady(o.id); }} disabled={painsBusy} className="h-10 w-full bg-primary text-sm font-black hover:bg-primary/90">
+                    <Sandwich className="mr-2 h-4 w-4" /> {painsBusy ? "Validation…" : `Pains cuits — libérer Pani'NO (${breadCount})`}
                   </Button>
                 )}
               </div>
             </article>
           );
-              })}
-
-            </div>
-          </TimeSlotGroup>
-        ));
-      })()}
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -401,16 +424,16 @@ function UpcomingPizzaioloPreview({
   onToggle: () => void;
 }) {
   return (
-    <section className={`mb-4 rounded-2xl border bg-card shadow-sm transition ${open ? "border-status-oven/40" : "border-dashed border-status-oven/30 bg-card/80"}`}>
+    <section className={`mb-3 rounded-xl border bg-card shadow-sm transition ${open ? "border-status-oven/40" : "border-dashed border-status-oven/30 bg-card/80"}`}>
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 p-3 text-left md:p-4"
+        className="flex w-full items-center justify-between gap-3 p-2.5 text-left md:p-3"
         aria-expanded={open}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <div className="rounded-xl bg-status-oven/10 p-2 text-status-oven">
-            <ClipboardList className="h-5 w-5" />
+          <div className="rounded-lg bg-status-oven/10 p-1.5 text-status-oven">
+            <ClipboardList className="h-4 w-4" />
           </div>
           <div className="min-w-0">
             <div className="text-xs font-black uppercase tracking-wide text-status-oven">À venir pizzaiolo</div>
@@ -420,7 +443,7 @@ function UpcomingPizzaioloPreview({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className="rounded-full border border-status-oven/30 bg-status-oven/10 px-2.5 py-1 text-sm font-black text-status-oven">
+          <span className="rounded-full border border-status-oven/30 bg-status-oven/10 px-2 py-0.5 text-xs font-black text-status-oven">
             {jobs.length}/3
           </span>
           <ChevronDown className={`h-5 w-5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
