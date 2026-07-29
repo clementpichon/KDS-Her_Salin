@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, ClipboardList, Flame, Minus, Clock, User, PackageCheck, Eye, EyeOff, Sandwich, Scissors } from "lucide-react";
+import { ChevronDown, ClipboardList, Clock, User, PackageCheck, Eye, EyeOff, Sandwich, Scissors } from "lucide-react";
 import { toast } from "sonner";
 import { useMemo, useState } from "react";
 import { useOrders, useSettings, usePaninoOrderItems, usePizzas } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { computeStock, formatTime, isLate } from "@/lib/scheduling";
+import { formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel } from "@/lib/kds-formatting";
 import { logProductionEvent } from "@/lib/production-events";
 import { buildPizzaioloQueue, type PizzaioloQueueJob } from "@/lib/pizzaiolo-queue";
@@ -32,7 +32,6 @@ function Four() {
   const settings = useSettings();
   const { items: paninoItems } = usePaninoOrderItems();
   const pizzas = usePizzas();
-  const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const [focusedIds, setFocusedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -194,15 +193,16 @@ function Four() {
 
   return (
     <div className="p-3 md:p-4">
-      <div className="mb-3 flex items-center justify-between rounded-xl border bg-card px-3 py-3 shadow-sm md:px-4">
-        <h1 className="flex items-center gap-2 text-lg font-black md:text-xl"><Flame className="text-status-oven" /> Four — En cuisson ({list.length})</h1>
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <div className="text-[10px] uppercase text-muted-foreground">Pâtons</div>
-            <div className={`text-xl font-bold ${stock < 20 ? "text-destructive" : "text-secondary"}`}>{stock}</div>
-          </div>
-          <Button variant="outline" onClick={loseDough} className="h-10"><Minus className="mr-1 h-4 w-4" />1 pâton</Button>
-        </div>
+      <div className="mb-2 flex justify-end">
+        <Button
+          variant="ghost"
+          onClick={loseDough}
+          className="h-7 rounded-full px-2 text-xs font-medium text-muted-foreground hover:text-destructive"
+          aria-label="Retirer un pâton du stock"
+          title="Retirer un pâton du stock"
+        >
+          -1 pâton
+        </Button>
       </div>
 
       <UpcomingPizzaioloPreview

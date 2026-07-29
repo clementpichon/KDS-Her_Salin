@@ -11,6 +11,8 @@ import {
   Menu,
   Maximize,
   BrainCircuit,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
   Sheet,
@@ -29,6 +31,7 @@ export const Route = createFileRoute("/_kds")({
 });
 
 const FULLSCREEN_DISMISSED_KEY = "hersalin_fullscreen_dismissed_v1";
+const KDS_HEADER_COLLAPSED_KEY = "hersalin_header_collapsed_v1";
 
 type FullscreenDocument = Document & { webkitFullscreenElement?: Element | null };
 type FullscreenRoot = HTMLElement & {
@@ -108,23 +111,48 @@ function KdsLayout() {
 function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
   const settings = useSettings();
   const mode = settings?.system_mode ?? "test";
+  const [headerCollapsed, setHeaderCollapsed] = useState(true);
+
+  useEffect(() => {
+    try {
+      const storedPreference = localStorage.getItem(KDS_HEADER_COLLAPSED_KEY);
+      setHeaderCollapsed(storedPreference === null ? true : storedPreference === "1");
+    } catch {}
+  }, []);
+
+  const toggleHeaderCollapsed = () => {
+    setHeaderCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem(KDS_HEADER_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  };
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
       <FullscreenPrompt />
       <header className="sticky top-0 z-30 border-b bg-card shadow-sm">
-        <div className="flex items-center gap-2 px-4 py-1">
-          <Link
-            to="/"
-            aria-label="Retour à l’accueil"
-            title="Retour à l’accueil"
-            className="group mr-2 inline-flex min-h-16 shrink-0 items-center rounded-xl px-1.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80 sm:mr-4"
-          >
-            <KdsHeaderLogo />
-          </Link>
-          <SystemModeBadge mode={mode} />
-          <DesktopNav logout={logout} />
-          <MobileNav logout={logout} />
+        <div className={`flex items-center gap-2 ${headerCollapsed ? "min-h-10 px-2 py-1" : "px-4 py-1"}`}>
+          {headerCollapsed ? (
+            <CollapsedHeader mode={mode} logout={logout} onExpand={toggleHeaderCollapsed} />
+          ) : (
+            <>
+              <Link
+                to="/"
+                aria-label="Retour à l’accueil"
+                title="Retour à l’accueil"
+                className="group mr-2 inline-flex min-h-16 shrink-0 items-center rounded-xl px-1.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80 sm:mr-4"
+              >
+                <KdsHeaderLogo />
+              </Link>
+              <SystemModeBadge mode={mode} />
+              <DesktopNav logout={logout} />
+              <MobileNav logout={logout} />
+              <HeaderCollapseButton collapsed={false} onToggle={toggleHeaderCollapsed} />
+            </>
+          )}
         </div>
       </header>
       <main className="flex-1">
@@ -134,15 +162,41 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
   );
 }
 
-function KdsHeaderLogo({ className = "" }: { className?: string }) {
+function KdsHeaderLogo({ className = "w-[8.5rem] sm:w-[9.5rem] lg:w-[10rem]" }: { className?: string }) {
   return (
     <img
       src={herSalinLogoUrl}
       alt=""
       aria-hidden="true"
-      className={`h-auto w-[8.5rem] max-w-none rounded-lg object-contain sm:w-[9.5rem] lg:w-[10rem] ${className}`}
+      className={`h-auto max-w-none rounded-lg object-contain ${className}`}
       draggable={false}
     />
+  );
+}
+
+function CollapsedHeader({
+  mode,
+  logout,
+  onExpand,
+}: {
+  mode: SystemMode;
+  logout: () => void;
+  onExpand: () => void;
+}) {
+  return (
+    <>
+      <Link
+        to="/"
+        aria-label="Retour à l’accueil"
+        title="Retour à l’accueil"
+        className="inline-flex h-8 shrink-0 items-center rounded-lg px-1 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 active:bg-accent/80"
+      >
+        <KdsHeaderLogo className="max-h-8 w-[5.25rem] sm:w-[5.75rem]" />
+      </Link>
+      <SystemModeMiniBadge mode={mode} />
+      <CompactNav logout={logout} />
+      <HeaderCollapseButton collapsed onToggle={onExpand} />
+    </>
   );
 }
 
@@ -160,6 +214,40 @@ function SystemModeBadge({ mode }: { mode: SystemMode }) {
     <span className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black tracking-wide sm:px-2.5 sm:text-[10px] ${className}`}>
       {label}
     </span>
+  );
+}
+
+function SystemModeMiniBadge({ mode }: { mode: SystemMode }) {
+  const label = mode === "learning" ? "APP" : mode === "normal" ? "NORMAL" : "TEST";
+  const className =
+    mode === "learning"
+      ? "border-blue-300 bg-blue-50 text-blue-700"
+      : mode === "normal"
+        ? "border-secondary/40 bg-secondary/10 text-secondary"
+        : "border-primary/40 bg-primary/10 text-primary";
+
+  return (
+    <span
+      className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-black tracking-wide ${className}`}
+      title={mode === "learning" ? "Mode apprentissage" : mode === "normal" ? "Mode normal" : "Mode test"}
+    >
+      {label}
+    </span>
+  );
+}
+
+function HeaderCollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+      aria-label={collapsed ? "Déployer le bandeau" : "Replier le bandeau"}
+      title={collapsed ? "Déployer le bandeau" : "Replier le bandeau"}
+    >
+      {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+      <span className="hidden md:inline">{collapsed ? "Déployer" : "Replier"}</span>
+    </button>
   );
 }
 
@@ -356,6 +444,47 @@ function DesktopNav({ logout }: { logout: () => void }) {
         <LogOut className="h-4 w-4" />
         Déconnexion
       </button>
+    </div>
+  );
+}
+
+function CompactNav({ logout }: { logout: () => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="ml-auto flex items-center">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            aria-label="Ouvrir le menu"
+          >
+            <Menu className="h-4 w-4" />
+            Menu
+          </button>
+        </SheetTrigger>
+        <SheetContent side="right" className="w-3/4 sm:max-w-sm">
+          <SheetHeader>
+            <SheetTitle>Menu</SheetTitle>
+          </SheetHeader>
+          <nav className="flex flex-col gap-1 mt-6">
+            <MobileNavLink to="/caisse" icon={<ShoppingCart className="h-5 w-5" />} setOpen={setOpen}>Caisse</MobileNavLink>
+            <MobileNavLink to="/assistant" icon={<BrainCircuit className="h-5 w-5" />} setOpen={setOpen}>Assistant</MobileNavLink>
+            <MobileNavLink to="/pizzaiolo" icon={<Pizza className="h-5 w-5" />} setOpen={setOpen}>Pizzaiolo</MobileNavLink>
+            <MobileNavLink to="/four" icon={<Flame className="h-5 w-5" />} setOpen={setOpen}>Four</MobileNavLink>
+            <MobileNavLink to="/panino" icon={<Sandwich className="h-5 w-5" />} setOpen={setOpen}>Pani'NO</MobileNavLink>
+            <MobileNavLink to="/pretes" icon={<PackageCheck className="h-5 w-5" />} setOpen={setOpen}>Prêtes</MobileNavLink>
+            <MobileNavLink to="/reglages" icon={<SettingsIcon className="h-5 w-5" />} setOpen={setOpen}>Réglages</MobileNavLink>
+          </nav>
+          <button
+            onClick={() => { setOpen(false); logout(); }}
+            className="mt-4 inline-flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          >
+            <LogOut className="h-5 w-5" />
+            Déconnexion
+          </button>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
