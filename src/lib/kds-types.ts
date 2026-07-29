@@ -56,6 +56,7 @@ export interface OrderItem {
   order_id: string;
   pizza_id: string | null;
   pizza_name: string;
+  base?: string | null;
   extras: string[];
   removed: string[];
   prepared: boolean;
@@ -96,6 +97,7 @@ export interface Ingredient {
 export interface DraftItem {
   pizza_id: string;
   pizza_name: string;
+  base?: string | null;
   extras: string[];
   removed: string[];
   cut_into?: number | null;

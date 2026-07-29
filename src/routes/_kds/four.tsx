@@ -306,6 +306,7 @@ function Four() {
                           />
                           <div className="min-w-0 flex-1">
                             <div className={`font-semibold ${pending ? "" : "text-foreground"}`}>{it.pizza_name}</div>
+                            {it.base && <div className="text-xs font-semibold text-muted-foreground">Base : {it.base}</div>}
                             {it.extras.length > 0 && <div className="text-xs text-secondary">+ {it.extras.join(", ")}</div>}
                             {it.removed.length > 0 && <div className="text-xs text-destructive">– sans {it.removed.join(", ")}</div>}
                             {it.cut_into && <div className="text-xs font-bold text-primary">✂️ À couper en {it.cut_into}</div>}
@@ -378,6 +379,7 @@ function Four() {
 type PizzaSummary = {
   key: string;
   pizza_name: string;
+  base: string | null;
   count: number;
   extras: string[];
   removed: string[];
@@ -473,6 +475,7 @@ function PreviewJobCard({ job, position }: { job: PizzaioloQueueJob; position: n
                   </span>
                 )}
               </div>
+              {pizza.base && <div className="text-xs font-semibold text-muted-foreground">Base : {pizza.base}</div>}
               {pizza.extras.length > 0 && <div className="text-xs font-semibold text-secondary">+ {pizza.extras.join(", ")}</div>}
               {pizza.removed.length > 0 && <div className="text-xs font-semibold text-destructive">Sans {pizza.removed.join(", ")}</div>}
               {pizza.cut_into && <div className="text-xs font-bold text-primary">À couper en {pizza.cut_into} après cuisson</div>}
@@ -507,7 +510,7 @@ function summarizePizzas(items: OrderItem[]): PizzaSummary[] {
   for (const item of items) {
     const extras = [...item.extras].sort();
     const removed = [...item.removed].sort();
-    const key = [item.pizza_name, extras.join("|"), removed.join("|"), item.cut_into ?? ""].join("::");
+    const key = [item.pizza_name, item.base ?? "", extras.join("|"), removed.join("|"), item.cut_into ?? ""].join("::");
     const summary = summaries.get(key);
     if (summary) {
       summary.count += 1;
@@ -517,6 +520,7 @@ function summarizePizzas(items: OrderItem[]): PizzaSummary[] {
     summaries.set(key, {
       key,
       pizza_name: item.pizza_name,
+      base: item.base ?? null,
       count: 1,
       extras,
       removed,

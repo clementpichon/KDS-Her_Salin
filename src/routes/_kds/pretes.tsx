@@ -179,6 +179,7 @@ function Pretes() {
                   {o.items?.map((it) => (
                     <li key={it.id} className="text-sm">
                       <span className="font-semibold">{it.pizza_name}</span>
+                      {it.base && <span className="text-muted-foreground"> · base {it.base}</span>}
                       {it.extras.length > 0 && <span className="text-secondary"> + {it.extras.join(", ")}</span>}
                       {it.removed.length > 0 && <span className="text-destructive"> – sans {it.removed.join(", ")}</span>}
                       {it.cut_into && <span className="font-bold text-primary"> · à couper en {it.cut_into}</span>}

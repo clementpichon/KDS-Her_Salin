@@ -15,6 +15,7 @@ const PaninoProductInput = z.object({
 const InputSchema = z.object({
   imageDataUrl: z.string().min(20).max(8_000_000),
   pizzaNames: z.array(z.string().min(1).max(80)).min(1).max(200),
+  pizzaBases: z.array(z.string().min(1).max(80)).default([]),
   paninoProducts: z.array(PaninoProductInput).max(50).default([]),
 });
 
@@ -23,6 +24,7 @@ const ParsedItem = z.object({
   quantity: z.number().int().min(1).max(50).default(1),
   extras: z.array(z.string()).default([]),
   removed: z.array(z.string()).default([]),
+  base: z.string().nullable().optional(),
   cut_into: z.number().int().nullable().optional(),
 });
 
@@ -72,6 +74,7 @@ export const scanOrderTicket = createServerFn({ method: "POST" })
 Tu DOIS répondre via l'appel de la fonction "extract_order".
 
 Catalogue PIZZAS (orthographe exacte) : ${data.pizzaNames.join(", ")}.
+Bases PIZZAS possibles : ${data.pizzaBases.length ? data.pizzaBases.join(", ") : "Tomate, Crème, Crème de chèvre, Crème de truffe"}.
 
 Catalogue PANI'NO / produits snack :
 ${paninoCatalogText}
@@ -81,6 +84,7 @@ RÈGLE ABSOLUE : toute pizza ou tout produit Pani'NO lu (imprimé OU manuscrit) 
 PIZZAS :
 - Choisis le nom exact dans le catalogue pizzas.
 - Quantité (ex: "2x Regina") → "quantity".
+- Si une base pizza est mentionnée (ex: "base crème", "base tomate"), choisis-la EXACTEMENT parmi les bases pizzas proposées → "base".
 - "sans X" / "no X" → "removed". "+ X" / "supp X" / "extra X" → "extras".
 - Découpage manuscrit ("à couper en 4/6/8", "/8") → "cut_into" (4, 6 ou 8). Si la mention concerne toute la commande, applique-la à toutes les pizzas.
 
@@ -129,6 +133,7 @@ Ignore tout ce qui n'est pas un produit du catalogue, un supplément, un retrait
                     properties: {
                       pizza_name: { type: "string", description: `Nom exact parmi: ${data.pizzaNames.join(", ")}` },
                       quantity: { type: "integer" },
+                      base: { type: "string", description: "Base pizza exacte si elle est indiquée." },
                       extras: { type: "array", items: { type: "string" } },
                       removed: { type: "array", items: { type: "string" } },
                       cut_into: { type: "integer", description: "Nombre de parts (4, 6 ou 8)." },

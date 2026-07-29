@@ -40,6 +40,7 @@ import {
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
 import { isOrderActive } from "@/lib/order-status";
+import { getPizzaBaseInfo, getPizzaBaseInfoFromText, PIZZA_BASE_OPTIONS } from "@/lib/pizza-production";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
 import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
@@ -129,7 +130,12 @@ function Caisse() {
         };
       });
       const result = await runOcr({
-        data: { imageDataUrl: dataUrl, pizzaNames: pizzas.map((p) => p.name), paninoProducts: paninoCatalog },
+        data: {
+          imageDataUrl: dataUrl,
+          pizzaNames: pizzas.map((p) => p.name),
+          pizzaBases: PIZZA_BASE_OPTIONS.map((base) => base.label),
+          paninoProducts: paninoCatalog,
+        },
       });
       if (!result.ok) return toast.error(result.error);
       const { parsed } = result;
@@ -144,6 +150,7 @@ function Caisse() {
           added.push({
             pizza_id: pizza.id,
             pizza_name: pizza.name,
+            base: getPizzaBaseInfoFromText(it.base)?.label ?? getDefaultPizzaBaseLabel(pizza),
             extras: it.extras ?? [],
             removed: it.removed ?? [],
             cut_into: cut,
@@ -264,12 +271,27 @@ function Caisse() {
           order_id: order.id,
           pizza_id: c.pizza_id,
           pizza_name: c.pizza_name,
+          base: c.base ?? null,
           extras: c.extras,
           removed: c.removed,
           cut_into: c.cut_into ?? null,
         }));
         const { error: itemsError } = await supabase.from("order_items").insert(items);
-        if (itemsError) throw itemsError;
+        if (itemsError) {
+          if (!isMissingOrderItemBaseColumn(itemsError)) throw itemsError;
+
+          const legacyItems = cart.map((c) => ({
+            order_id: order.id,
+            pizza_id: c.pizza_id,
+            pizza_name: c.pizza_name,
+            extras: c.extras,
+            removed: c.removed,
+            cut_into: c.cut_into ?? null,
+          }));
+          const { error: legacyItemsError } = await supabase.from("order_items").insert(legacyItems);
+          if (legacyItemsError) throw legacyItemsError;
+          toast.warning("Commande créée. Migration Supabase à appliquer pour mémoriser les bases pizzas.");
+        }
       }
 
       if (paninoCart.length > 0) {
@@ -508,6 +530,7 @@ function Caisse() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
                       <div className="font-semibold">🍕 {c.pizza_name}</div>
+                      {c.base && <div className="text-xs">Base : {c.base}</div>}
                       {c.extras.length > 0 && <div className="text-xs text-secondary">+ {c.extras.join(", ")}</div>}
                       {c.removed.length > 0 && <div className="text-xs text-destructive">– {c.removed.join(", ")}</div>}
                       {c.cut_into && <div className="text-xs font-semibold text-primary">À couper en {c.cut_into}</div>}
@@ -875,12 +898,18 @@ function PizzaCustomizer({
   onClose: () => void;
   onAdd: (item: DraftItem) => void;
 }) {
+  const defaultBase = getDefaultPizzaBaseLabel(pizza);
+  const [base, setBase] = useState<string | null>(defaultBase);
   const [extras, setExtras] = useState<string[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
   const [cutInto, setCutInto] = useState<number | null>(null);
 
-  // reset when pizza changes
-  useMemo(() => { setExtras([]); setRemoved([]); setCutInto(null); }, [pizza?.id]);
+  useEffect(() => {
+    setBase(defaultBase);
+    setExtras([]);
+    setRemoved([]);
+    setCutInto(null);
+  }, [pizza?.id, defaultBase]);
 
   if (!pizza) return null;
 
@@ -894,6 +923,13 @@ function PizzaCustomizer({
           <DialogTitle className="text-xl">{pizza.name}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          <Section title="Base demandée">
+            {PIZZA_BASE_OPTIONS.map((option) => (
+              <Chip key={option.key} active={base === option.label} onClick={() => setBase(option.label)}>
+                {option.label}
+              </Chip>
+            ))}
+          </Section>
           <div>
             <div className="text-sm font-semibold mb-2 flex items-center gap-2"><Minus className="h-4 w-4 text-destructive" /> Retirer</div>
             <div className="flex flex-wrap gap-2">
@@ -939,7 +975,7 @@ function PizzaCustomizer({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Annuler</Button>
-          <Button onClick={() => onAdd({ pizza_id: pizza.id, pizza_name: pizza.name, extras, removed, cut_into: cutInto })} className="h-11">
+          <Button onClick={() => onAdd({ pizza_id: pizza.id, pizza_name: pizza.name, base, extras, removed, cut_into: cutInto })} className="h-11">
             <Plus className="mr-2 h-4 w-4" /> Ajouter au panier
           </Button>
         </DialogFooter>
@@ -955,6 +991,23 @@ function defaultTime() {
   d.setMinutes(roundedMinutes, 0, 0);
   return toLocalInput(d);
 }
+
+function isMissingOrderItemBaseColumn(error: unknown) {
+  const maybeError = error as { code?: string; message?: string; details?: string; hint?: string };
+  const text = [maybeError.code, maybeError.message, maybeError.details, maybeError.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("fr");
+
+  return text.includes("base") && (text.includes("column") || text.includes("schema cache") || text.includes("pgrst204"));
+}
+
+function getDefaultPizzaBaseLabel(pizza: Pizza | null) {
+  if (!pizza) return null;
+  const base = getPizzaBaseInfo({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]);
+  return base.key === "speciale" ? null : base.label;
+}
+
 function toLocalInput(d: Date) {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");

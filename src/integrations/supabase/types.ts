@@ -37,6 +37,7 @@ export type Database = {
       }
       order_items: {
         Row: {
+          base: string | null
           created_at: string
           cut_into: number | null
           extras: string[]
@@ -52,6 +53,7 @@ export type Database = {
           sent_to_oven_at: string | null
         }
         Insert: {
+          base?: string | null
           created_at?: string
           cut_into?: number | null
           extras?: string[]
@@ -67,6 +69,7 @@ export type Database = {
           sent_to_oven_at?: string | null
         }
         Update: {
+          base?: string | null
           created_at?: string
           cut_into?: number | null
           extras?: string[]

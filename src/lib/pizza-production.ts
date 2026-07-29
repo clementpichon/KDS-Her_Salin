@@ -21,21 +21,21 @@ const BASE_INFO: Record<PizzaBaseKey, PizzaBaseInfo> = {
   },
   creme: {
     key: "creme",
-    label: "Creme",
+    label: "Crème",
     ringClassName: "border-slate-300",
     badgeClassName: "bg-slate-100 text-slate-700 border-slate-300",
     dotClassName: "bg-slate-300",
   },
   chevre: {
     key: "chevre",
-    label: "Chevre",
+    label: "Crème de chèvre",
     ringClassName: "border-amber-400/80",
     badgeClassName: "bg-amber-400/15 text-amber-800 border-amber-400/40",
     dotClassName: "bg-amber-400",
   },
   truffe: {
     key: "truffe",
-    label: "Truffe",
+    label: "Crème de truffe",
     ringClassName: "border-stone-700/70",
     badgeClassName: "bg-stone-700/10 text-stone-800 border-stone-700/30",
     dotClassName: "bg-stone-700",
@@ -49,6 +49,13 @@ const BASE_INFO: Record<PizzaBaseKey, PizzaBaseInfo> = {
   },
 };
 
+export const PIZZA_BASE_OPTIONS: PizzaBaseInfo[] = [
+  BASE_INFO.tomate,
+  BASE_INFO.creme,
+  BASE_INFO.chevre,
+  BASE_INFO.truffe,
+];
+
 export function pizzaProductionStatus(item: OrderItem, order?: Order): PizzaProductionStatus {
   if (item.production_status) return item.production_status;
   if (order?.status === "ready" || order?.status === "delivered") return "ready";
@@ -56,7 +63,10 @@ export function pizzaProductionStatus(item: OrderItem, order?: Order): PizzaProd
   return item.prepared ? "in_oven" : "to_prepare";
 }
 
-export function getPizzaBaseInfo(item: Pick<OrderItem, "pizza_id" | "pizza_name">, pizzas: Pizza[]): PizzaBaseInfo {
+export function getPizzaBaseInfo(item: Pick<OrderItem, "pizza_id" | "pizza_name"> & { base?: string | null }, pizzas: Pizza[]): PizzaBaseInfo {
+  const requestedBase = getPizzaBaseInfoFromText(item.base);
+  if (requestedBase) return requestedBase;
+
   const pizza = pizzas.find((candidate) => candidate.id === item.pizza_id || candidate.name === item.pizza_name);
   const haystack = [pizza?.name, ...(pizza?.ingredients ?? []), item.pizza_name]
     .filter(Boolean)
@@ -70,3 +80,13 @@ export function getPizzaBaseInfo(item: Pick<OrderItem, "pizza_id" | "pizza_name"
   return BASE_INFO.speciale;
 }
 
+export function getPizzaBaseInfoFromText(value: string | null | undefined): PizzaBaseInfo | null {
+  const normalized = value?.trim().toLocaleLowerCase("fr");
+  if (!normalized) return null;
+
+  if (normalized.includes("truffe")) return BASE_INFO.truffe;
+  if (normalized.includes("chevre") || normalized.includes("chèvre")) return BASE_INFO.chevre;
+  if (normalized.includes("creme") || normalized.includes("crème")) return BASE_INFO.creme;
+  if (normalized.includes("tomate")) return BASE_INFO.tomate;
+  return null;
+}
