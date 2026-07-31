@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
+  ArrowLeft,
+  CalendarClock,
   Plus,
   Minus,
   Trash2,
@@ -12,45 +14,62 @@ import {
   Pizza as PizzaIcon,
   Sandwich,
   Search,
-  ChevronDown,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  Copy,
-  PhoneCall,
+  ShoppingBasket,
+  UserRound,
 } from "lucide-react";
-import { usePizzas, useOrders, useSettings, useIngredients, usePaninoCatalog, usePaninoOrderItems, usePhoneStatus } from "@/hooks/use-kds-data";
+import {
+  usePizzas,
+  useOrders,
+  useSettings,
+  useIngredients,
+  usePaninoCatalog,
+  usePaninoOrderItems,
+  usePhoneStatus,
+} from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { CashierStationHeader } from "@/components/kds/CashierStationHeader";
 import { getPizzaImage } from "@/lib/pizza-images";
-import {
-  computeStock,
-  computePrepStart,
-  computePizzaCapacity,
-  findNextPizzaCapacitySlots,
-  formatTime,
-  isLate,
-  minutesUntil,
-  type PizzaCapacityResult,
-} from "@/lib/scheduling";
+import { computeStock, computePrepStart, formatTime, isLate } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
 import { isOrderActive } from "@/lib/order-status";
 import {
+  analyzeCashierSlot,
+  buildCashierSlotOptions,
+  isSlotHighlyLoaded,
+  summarizeCashierDraft,
+  type CashierCatalogTab,
+  type CashierFlowStep,
+  type CashierLoadLevel,
+  type CashierSlotOption,
+} from "@/lib/cashier-flow";
+import {
   getDefaultPizzaBaseKey,
+  getPizzaBaseInfoFromKey,
   getPizzaBaseInfoFromText,
-  getPizzaDisplayDetails,
   inferRequestedBase,
   PIZZA_BASE_OPTIONS,
   type PizzaBaseKey,
 } from "@/lib/pizza-production";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
-import type { DraftItem, Pizza, PaninoProduct, PaninoOption, DraftPaninoItem, Order } from "@/lib/kds-types";
+import type {
+  DraftItem,
+  Pizza,
+  PaninoProduct,
+  PaninoOption,
+  DraftPaninoItem,
+} from "@/lib/kds-types";
 
 const LOCAL_CONTROL_KEY = "hersalin_control_settings_v1";
 
@@ -58,9 +77,16 @@ export const Route = createFileRoute("/_kds/caisse")({
   head: () => ({
     meta: [
       { title: "Caisse — Prise de commande — Her Salin" },
-      { name: "description", content: "Écran caisse Her Salin : saisie des commandes, scan de bons, choix du créneau et envoi en préparation." },
+      {
+        name: "description",
+        content:
+          "Écran caisse Her Salin : saisie des commandes, scan de bons, choix du créneau et envoi en préparation.",
+      },
       { property: "og:title", content: "Caisse — Prise de commande" },
-      { property: "og:description", content: "Saisie de commandes, scan de bons et choix du créneau de four." },
+      {
+        property: "og:description",
+        content: "Saisie de commandes, scan de bons et choix du créneau de four.",
+      },
     ],
     links: [{ rel: "canonical", href: "/caisse" }],
   }),
@@ -75,6 +101,7 @@ function Caisse() {
   const { products: paninoProducts, options: paninoOptions } = usePaninoCatalog();
   const { items: paninoItems, reload: reloadPanino } = usePaninoOrderItems();
 
+  const [flowStep, setFlowStep] = useState<CashierFlowStep>("products");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [requestedTime, setRequestedTime] = useState(defaultTime());
@@ -84,13 +111,27 @@ function Caisse() {
   const [editing, setEditing] = useState<{ pizza: Pizza } | null>(null);
   const [editingPanino, setEditingPanino] = useState<PaninoProduct | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  
   const [scanning, setScanning] = useState(false);
-  const [catalogTab, setCatalogTab] = useState<"pizzas" | "panino">("pizzas");
+  const [catalogTab, setCatalogTab] = useState<CashierCatalogTab>("pizzas");
   const [catalogQuery, setCatalogQuery] = useState("");
-  const [showTodayOrders, setShowTodayOrders] = useState(false);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [expandedSlotId, setExpandedSlotId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const runOcr = useServerFn(scanOrderTicket);
+
+  const paninoByOrder = useMemo(() => {
+    const map = new Map<string, (typeof paninoItems)[0][]>();
+    for (const item of paninoItems) {
+      const current = map.get(item.order_id) ?? [];
+      current.push(item);
+      map.set(item.order_id, current);
+    }
+    return map;
+  }, [paninoItems]);
+
+  const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
+  const draftSummary = useMemo(() => summarizeCashierDraft(cart, paninoCart), [cart, paninoCart]);
+  const pendingPaninoDoughs = draftSummary.paninoCount;
 
   useEffect(() => {
     const incomingPhone = phoneStatus?.current_phone_number;
@@ -98,17 +139,12 @@ function Caisse() {
     setCustomerPhone(incomingPhone);
   }, [phoneStatus?.current_phone_number, customerPhone]);
 
-  const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
-  const pendingPaninoDoughs = paninoCart.filter((p) => p.product_key === "panino").length;
-  const paninoByOrder = useMemo(() => {
-    const m = new Map<string, typeof paninoItems[0][] >();
-    for (const it of paninoItems) {
-      const arr = m.get(it.order_id) ?? [];
-      arr.push(it);
-      m.set(it.order_id, arr);
+  useEffect(() => {
+    if (draftSummary.totalProducts === 0 && flowStep !== "products") {
+      setFlowStep("products");
+      setSelectedSlotId(null);
     }
-    return m;
-  }, [paninoItems]);
+  }, [draftSummary.totalProducts, flowStep]);
 
   const handleScanFile = async (file: File) => {
     if (!file.type.startsWith("image/")) return toast.error("Fichier image requis");
@@ -151,10 +187,21 @@ function Caisse() {
       const unknown: string[] = [];
       for (const it of parsed.items) {
         const pizza = byName.get(it.pizza_name.toLowerCase());
-        if (!pizza) { unknown.push(it.pizza_name); continue; }
+        if (!pizza) {
+          unknown.push(it.pizza_name);
+          continue;
+        }
         const cut = it.cut_into && [4, 6, 8].includes(it.cut_into) ? it.cut_into : null;
         for (let i = 0; i < Math.max(1, it.quantity); i++) {
-          added.push(buildPizzaDraftItem(pizza, getPizzaBaseInfoFromText(it.base)?.key ?? null, it.extras ?? [], it.removed ?? [], cut));
+          added.push(
+            buildPizzaDraftItem(
+              pizza,
+              getPizzaBaseInfoFromText(it.base)?.key ?? null,
+              it.extras ?? [],
+              it.removed ?? [],
+              cut,
+            ),
+          );
         }
       }
 
@@ -163,11 +210,16 @@ function Caisse() {
       const addedPanino: DraftPaninoItem[] = [];
       for (const it of parsed.panino_items ?? []) {
         const prod = paninoByName.get(it.product_name.toLowerCase());
-        if (!prod) { unknown.push(it.product_name); continue; }
+        if (!prod) {
+          unknown.push(it.product_name);
+          continue;
+        }
         const opts = paninoOptions.filter((o) => o.product_key === prod.key);
         const matchOne = (kind: string, value?: string | null) => {
           if (!value) return null;
-          const found = opts.find((o) => o.kind === kind && o.name.toLowerCase() === value.toLowerCase());
+          const found = opts.find(
+            (o) => o.kind === kind && o.name.toLowerCase() === value.toLowerCase(),
+          );
           return found ? found.name : null;
         };
         const matchMany = (kind: string, values: string[]) => {
@@ -190,9 +242,12 @@ function Caisse() {
         }
       }
 
-      if (added.length === 0 && addedPanino.length === 0) return toast.error("Aucun produit reconnu.");
+      if (added.length === 0 && addedPanino.length === 0)
+        return toast.error("Aucun produit reconnu.");
       if (added.length) setCart((c) => [...c, ...added]);
       if (addedPanino.length) setPaninoCart((c) => [...c, ...addedPanino]);
+      setSelectedSlotId(null);
+      setFlowStep("products");
       if (parsed.customer_name && !customerName.trim()) setCustomerName(parsed.customer_name);
       if (parsed.requested_time && /^\d{2}:\d{2}$/.test(parsed.requested_time)) {
         setRequestedTime(parsed.requested_time);
@@ -203,7 +258,9 @@ function Caisse() {
       const parts: string[] = [];
       if (added.length) parts.push(`${added.length} pizza(s)`);
       if (addedPanino.length) parts.push(`${addedPanino.length} Pani'NO`);
-      toast.success(`${parts.join(" + ")} ajouté(s)${unknown.length ? ` (ignoré : ${unknown.join(", ")})` : ""}`);
+      toast.success(
+        `${parts.join(" + ")} ajouté(s)${unknown.length ? ` (ignoré : ${unknown.join(", ")})` : ""}`,
+      );
     } catch (e) {
       console.error(e);
       toast.error("Échec de l'analyse du bon");
@@ -213,7 +270,6 @@ function Caisse() {
     }
   };
 
-
   const { ingredients: allIngredientsList } = useIngredients();
   const allIngredients = useMemo(() => {
     return allIngredientsList
@@ -222,10 +278,88 @@ function Caisse() {
       .sort((a, b) => a.localeCompare(b, "fr"));
   }, [allIngredientsList]);
 
+  const todayOrders = orders
+    .filter(isOrderActive)
+    .sort((a, b) => new Date(a.requested_time).getTime() - new Date(b.requested_time).getTime());
+  const readyOrders = todayOrders.filter((order) => {
+    const orderPaninos = paninoByOrder.get(order.id) ?? [];
+    const hasPizzas = (order.items?.length ?? 0) > 0;
+    const hasPaninos = orderPaninos.length > 0;
+    if (!hasPizzas && !hasPaninos) return false;
+    const pizzasReady = !hasPizzas || order.status === "ready";
+    const paninosDone = !hasPaninos || orderPaninos.every((item) => item.status === "done");
+    return pizzasReady && paninosDone;
+  });
+  const urgentCashierCount = todayOrders.filter((order) => isLate(order.requested_time)).length;
+
+  const normalizedCatalogQuery = catalogQuery.trim().toLocaleLowerCase("fr");
+  const disabledPaninoKeys = readDisabledPaninoKeys();
+  const availablePaninoProducts = paninoProducts.filter(
+    (product) => product.active && !disabledPaninoKeys.has(product.key),
+  );
+  const filteredPizzas = pizzas.filter((pizza) =>
+    `${pizza.name} ${pizza.ingredients.join(" ")}`
+      .toLocaleLowerCase("fr")
+      .includes(normalizedCatalogQuery),
+  );
+  const filteredPaninoProducts = availablePaninoProducts.filter((product) => {
+    if (getPaninoCatalogTab(product.key) !== catalogTab) return false;
+    return product.name.toLocaleLowerCase("fr").includes(normalizedCatalogQuery);
+  });
+  const requestedDate = isValidLocalTime(requestedTime) ? parseLocalTime(requestedTime) : null;
+  const slotSearchStart =
+    requestedDate && requestedDate.getTime() > Date.now() + 15 * 60 * 1000
+      ? new Date(requestedDate.getTime() - 15 * 60 * 1000)
+      : new Date();
+  const slotOptions =
+    settings && draftSummary.totalProducts > 0
+      ? buildCashierSlotOptions({
+          orders,
+          paninoItems,
+          settings,
+          cart,
+          paninoCart,
+          fromTime: slotSearchStart,
+        })
+      : [];
+  const selectedSlot =
+    selectedSlotId && settings && requestedDate
+      ? analyzeCashierSlot({
+          orders,
+          paninoItems,
+          settings,
+          cart,
+          paninoCart,
+          requestedTime: requestedDate,
+        })
+      : null;
+
+  const goToSlots = () => {
+    if (draftSummary.totalProducts === 0) return toast.error("Panier vide");
+    setSelectedSlotId(null);
+    setExpandedSlotId(null);
+    setFlowStep("slot");
+  };
+
+  const chooseSlot = (slot: CashierSlotOption) => {
+    setRequestedTime(toLocalInput(slot.time));
+    setSelectedSlotId(slot.id);
+    setFlowStep("client");
+    if (isSlotHighlyLoaded(slot)) {
+      toast.warning("Créneau choisi volontairement malgré une charge élevée.");
+    }
+  };
+
+  const changeDraft = (change: () => void) => {
+    change();
+    setSelectedSlotId(null);
+  };
+
   const submit = async () => {
     if (submitting) return;
     if (!customerName.trim()) return toast.error("Nom du client requis");
     if (cart.length === 0 && paninoCart.length === 0) return toast.error("Panier vide");
+    if (!selectedSlotId) return toast.error("Choisissez un créneau");
     if (!isValidLocalTime(requestedTime)) return toast.error("Heure demandée invalide");
     if (!settings) return;
     const doughsNeeded = cart.length + pendingPaninoDoughs;
@@ -235,10 +369,19 @@ function Caisse() {
         `Conseil : stock pâtons serré (${stock} restant${stock > 1 ? "s" : ""} pour ${doughsNeeded} nécessaire${doughsNeeded > 1 ? "s" : ""}).`,
       );
     }
-    const capacity = computePizzaCapacity(orders, settings, parseLocalTime(requestedTime), cart.length);
-    if (cart.length > 0 && !capacity.canAccept) {
+    const reqDate = parseLocalTime(requestedTime);
+    const finalSlotCheck = analyzeCashierSlot({
+      orders,
+      paninoItems,
+      settings,
+      cart,
+      paninoCart,
+      requestedTime: reqDate,
+    });
+    if (isSlotHighlyLoaded(finalSlotCheck)) {
       toast.warning(
-        `Conseil : créneau pizza très chargé (${Math.max(0, capacity.remainingBeforeOrder)} place(s) restante(s) pour ${cart.length} pizza(s)).`,
+        finalSlotCheck.warnings[0] ??
+          "Créneau chargé : la commande reste créée car la décision appartient à la caisse.",
       );
     }
 
@@ -246,7 +389,6 @@ function Caisse() {
     let createdOrderId: string | null = null;
 
     try {
-      const reqDate = parseLocalTime(requestedTime);
       const prepStart = cart.length > 0 ? computePrepStart(reqDate, cart.length, settings) : null;
       const breadCount = paninoCart.filter((p) => p.product_key === "panino").length;
       const normalizedCustomerPhone = normalizePhoneNumber(customerPhone);
@@ -305,10 +447,14 @@ function Caisse() {
               removed: c.removed,
               cut_into: c.cut_into ?? null,
             }));
-            const { error: legacyItemsError } = await supabase.from("order_items").insert(legacyItems);
+            const { error: legacyItemsError } = await supabase
+              .from("order_items")
+              .insert(legacyItems);
             if (legacyItemsError) throw legacyItemsError;
           }
-          toast.warning("Commande créée. Migration Supabase à appliquer pour mémoriser toute la résolution des bases pizzas.");
+          toast.warning(
+            "Commande créée. Migration Supabase à appliquer pour mémoriser toute la résolution des bases pizzas.",
+          );
         }
       }
 
@@ -339,16 +485,23 @@ function Caisse() {
           panino_count: paninoCart.filter((item) => item.product_key === "panino").length,
           fish_count: paninoCart.filter((item) => item.product_key === "fishno").length,
           fries_count: paninoCart.filter((item) => item.product_key === "cornet_frites").length,
+          source: "kds_caisse",
+          addition_sync_required: true,
         },
       });
 
-      toast.success(`Commande ${customerName} validée pour ${formatTime(reqDate)}`);
+      toast.success(
+        `Commande ${customerName} validée pour ${formatTime(reqDate)} · À enregistrer dans L'Addition`,
+      );
       setCart([]);
       setPaninoCart([]);
       setCustomerName("");
       setCustomerPhone("");
       setOrderNotes("");
       setRequestedTime(defaultTime());
+      setSelectedSlotId(null);
+      setExpandedSlotId(null);
+      setFlowStep("products");
       reload();
       reloadPanino();
     } catch (error) {
@@ -364,430 +517,94 @@ function Caisse() {
     }
   };
 
-
-  const canDeleteOrder = (order: Order) => {
-    const orderPaninos = paninoByOrder.get(order.id) ?? [];
-    const pizzasUntouched = (order.items?.length ?? 0) === 0 || order.status === "to_prepare";
-    const breadUntouched = !order.pains_panino_status || order.pains_panino_status === "a_preparer";
-    const paninosUntouched = orderPaninos.every((p) => p.status === "pending");
-    return pizzasUntouched && breadUntouched && paninosUntouched;
-  };
-
-  const handleDeleteOrder = async (orderId: string) => {
-    if (!window.confirm("Supprimer cette commande ?")) return;
-    const order = orders.find((o) => o.id === orderId);
-    if (!order || !canDeleteOrder(order)) {
-      toast.error("Commande déjà en préparation : suppression impossible");
-      return;
-    }
-    await supabase.from("order_items").delete().eq("order_id", orderId);
-    await supabase.from("panino_order_items").delete().eq("order_id", orderId);
-    const { error } = await supabase.from("orders").delete().eq("id", orderId);
-    if (error) {
-      toast.error("Erreur lors de la suppression");
-      return;
-    }
-    toast.success("Commande supprimée");
-    reload();
-    reloadPanino();
-  };
-
-  const todayOrders = orders
-    .filter(isOrderActive)
-    .sort((a, b) => new Date(a.requested_time).getTime() - new Date(b.requested_time).getTime());
-  const readyOrders = todayOrders.filter((o) => {
-    const paninos = paninoByOrder.get(o.id) ?? [];
-    const hasPizzas = (o.items?.length ?? 0) > 0;
-    const hasPaninos = paninos.length > 0;
-    if (!hasPizzas && !hasPaninos) return false;
-    const pizzasReady = !hasPizzas || o.status === "ready";
-    const paninosDone = !hasPaninos || paninos.every((p) => p.status === "done");
-    return pizzasReady && paninosDone;
-  });
-  const readyOrderIds = new Set(readyOrders.map((order) => order.id));
-  const urgentCashierCount = todayOrders.filter((o) => isLate(o.requested_time)).length;
-
-  const normalizedCatalogQuery = catalogQuery.trim().toLocaleLowerCase("fr");
-  const filteredPizzas = pizzas.filter((pizza) =>
-    `${pizza.name} ${pizza.ingredients.join(" ")}`
-      .toLocaleLowerCase("fr")
-      .includes(normalizedCatalogQuery),
-  );
-  const disabledPaninoKeys = readDisabledPaninoKeys();
-  const availablePaninoProducts = paninoProducts.filter(
-    (product) => product.active && !disabledPaninoKeys.has(product.key),
-  );
-  const filteredPaninoProducts = availablePaninoProducts.filter((product) =>
-    product.name.toLocaleLowerCase("fr").includes(normalizedCatalogQuery),
-  );
-  const cartCount = cart.length + paninoCart.length;
-  const requestedDate = isValidLocalTime(requestedTime) ? parseLocalTime(requestedTime) : null;
-  const pizzaCapacity = settings && requestedDate
-    ? computePizzaCapacity(orders, settings, requestedDate, cart.length)
-    : null;
-  const nextPizzaSlots = settings && requestedDate && cart.length > 0 && pizzaCapacity?.status === "blocked"
-    ? findNextPizzaCapacitySlots(orders, settings, requestedDate, cart.length)
-    : [];
-
   return (
-    <div className="p-3 lg:p-4">
+    <div className="space-y-3 p-3 lg:p-4">
       <CashierStationHeader
         active="caisse"
         readyCount={readyOrders.length}
         activeCount={todayOrders.length}
         urgentCount={urgentCashierCount}
       />
-      <div className="grid gap-4 min-[720px]:grid-cols-[minmax(300px,340px)_minmax(0,1fr)] min-[720px]:items-start xl:grid-cols-[360px_minmax(0,1fr)]">
       <h2 className="sr-only">Caisse — Prise de commande</h2>
-      {/* Panel gauche : commande */}
-      <aside className="flex h-fit flex-col gap-3 rounded-2xl border bg-card p-4 shadow-sm min-[720px]:sticky min-[720px]:top-[4.5rem] min-[720px]:max-h-[calc(100vh-5.5rem)] min-[720px]:overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold">Commande</h2>
-          <div className="text-right">
-            <div className="text-[10px] uppercase text-muted-foreground">Pâtons</div>
-            <div className={`text-xl font-bold ${stock < 20 ? "text-destructive" : "text-secondary"}`}>{stock}</div>
-          </div>
-        </div>
+      <CashierStepper step={flowStep} />
 
-        <div className="space-y-3">
-          <div>
-            <Label htmlFor="cust">Nom du client</Label>
-            <Input id="cust" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Ex : Martin" className="h-11 text-base" />
-          </div>
-          <div>
-            <Label htmlFor="phone">Téléphone (optionnel)</Label>
-            <Input
-              id="phone"
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
-              placeholder="Ex : 06 12 34 56 78"
-              inputMode="tel"
-              className="h-11 text-base"
-            />
-            {customerPhone && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Enregistré comme {formatPhoneNumber(customerPhone)}
-              </p>
-            )}
-          </div>
-          <div>
-            <Label htmlFor="time">Heure demandée</Label>
-            <Input
-              id="time"
-              type="time"
-              value={requestedTime}
-              onInput={(e) => setRequestedTime(e.currentTarget.value)}
-              onChange={(e) => setRequestedTime(e.target.value)}
-              onBlur={(e) => setRequestedTime(e.currentTarget.value)}
-              className="h-11 text-base"
-            />
-            {isTimeInPast(requestedTime) && (
-              <p className="mt-1 text-xs text-orange-600 dark:text-orange-400">
-                ⚠ Heure passée — la commande restera à la date d'aujourd'hui
-              </p>
-            )}
-          </div>
-          {pizzaCapacity && (
-            <PizzaCapacityCard
-              capacity={pizzaCapacity}
-              requestedTime={requestedDate}
-              nextSlots={nextPizzaSlots}
-              onSelectSlot={(slot) => setRequestedTime(toLocalInput(slot))}
-            />
-          )}
-          <div>
-            <Label htmlFor="notes">Notes (ex : à couper)</Label>
-            <Input id="notes" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} placeholder="Annotations libres" className="h-11 text-base" />
-          </div>
-        </div>
+      {flowStep === "products" && (
+        <ProductsStep
+          stock={stock}
+          catalogTab={catalogTab}
+          catalogQuery={catalogQuery}
+          pizzas={filteredPizzas}
+          paninoProducts={filteredPaninoProducts}
+          cart={cart}
+          paninoCart={paninoCart}
+          draftSummary={draftSummary}
+          scanning={scanning}
+          onCatalogTabChange={setCatalogTab}
+          onSearchChange={setCatalogQuery}
+          onScanClick={() => fileInputRef.current?.click()}
+          onEditPizza={(pizza) => setEditing({ pizza })}
+          onEditPanino={setEditingPanino}
+          onRemovePizza={(index) =>
+            changeDraft(() => setCart((current) => current.filter((_, i) => i !== index)))
+          }
+          onDuplicatePizza={(index) =>
+            changeDraft(() => setCart((current) => [...current, current[index]]))
+          }
+          onRemovePanino={(index) =>
+            changeDraft(() => setPaninoCart((current) => current.filter((_, i) => i !== index)))
+          }
+          onDuplicatePanino={(index) =>
+            changeDraft(() => setPaninoCart((current) => [...current, current[index]]))
+          }
+          onValidateProducts={goToSlots}
+        />
+      )}
 
-        <div className="border-t pt-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleScanFile(f);
-            }}
-          />
-          <Button
-            variant="outline"
-            className="w-full h-11"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={scanning}
-          >
-            {scanning ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyse du bon…</>
-            ) : (
-              <><ScanLine className="mr-2 h-4 w-4" /> Scanner un bon de commande</>
-            )}
-          </Button>
-        </div>
+      {flowStep === "slot" && (
+        <SlotChoiceStep
+          summary={draftSummary}
+          slotOptions={slotOptions}
+          expandedSlotId={expandedSlotId}
+          onBack={() => {
+            setSelectedSlotId(null);
+            setFlowStep("products");
+          }}
+          onChoose={chooseSlot}
+          onToggleDetails={(slotId) =>
+            setExpandedSlotId((current) => (current === slotId ? null : slotId))
+          }
+        />
+      )}
 
-        <div className="border-t pt-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold">Panier ({cartCount})</div>
-            {cartCount > 0 && (
-              <span className="rounded-full bg-primary px-2.5 py-0.5 text-xs font-bold text-primary-foreground">
-                {cart.length} pizza{cart.length > 1 ? "s" : ""} · {paninoCart.length} Pani'NO
-              </span>
-            )}
-          </div>
-          {cart.length === 0 && paninoCart.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-muted/35 px-3 py-5 text-center">
-              <p className="text-sm font-medium text-muted-foreground">Le panier est vide</p>
-              <p className="mt-1 text-xs text-muted-foreground">Touchez un produit pour l'ajouter.</p>
-            </div>
-          ) : (
-            <ul className="max-h-56 space-y-2 overflow-auto pr-1">
-              {cart.map((c, idx) => {
-                const display = getPizzaDisplayDetails(c, pizzas);
-                return (
-                  <li key={`p-${idx}`} className="rounded-lg border bg-background p-2 text-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="font-semibold">🍕 {c.pizza_name}</div>
-                        <div className="text-xs">Base : {display.base.label}</div>
-                        {display.extras.length > 0 && <div className="text-xs text-secondary">+ {display.extras.join(", ")}</div>}
-                        {display.removed.length > 0 && <div className="text-xs text-destructive">– {display.removed.join(", ")}</div>}
-                        {c.cut_into && <div className="text-xs font-semibold text-primary">À couper en {c.cut_into}</div>}
-                      </div>
-                      <Button size="icon" variant="ghost" aria-label="Supprimer" className="h-7 w-7" onClick={() => setCart(cart.filter((_, i) => i !== idx))}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-              {paninoCart.map((p, idx) => (
-                <li key={`pn-${idx}`} className="rounded-lg border bg-background p-2 text-sm">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="font-semibold">{paninoDisplayName(p.product_key, p.product_name)}</div>
-                      {p.base && <div className="text-xs">Base : {p.base}</div>}
-                      {friesLabel(p.fries_mode) && <div className="text-xs text-primary">{friesLabel(p.fries_mode)}</div>}
-                      {p.side && <div className="text-xs">Accompagnement : {p.side}</div>}
-                      {p.sauces.length > 0 && (
-                        <div className="text-xs">
-                          SAUCES : {p.sauces.length === 2
-                            ? `MOITIÉ ${p.sauces[0]} / MOITIÉ ${p.sauces[1]}`
-                            : p.sauces[0]}
-                        </div>
-                      )}
-                      {p.extras.length > 0 && <div className="text-xs text-secondary">+ {p.extras.join(", ")}</div>}
-                      {p.removed.length > 0 && <div className="text-xs text-destructive">– sans {p.removed.join(", ")}</div>}
-                    </div>
-                    <Button size="icon" variant="ghost" aria-label="Supprimer" className="h-7 w-7" onClick={() => setPaninoCart(paninoCart.filter((_, i) => i !== idx))}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      {flowStep === "client" && (
+        <ClientStep
+          summary={draftSummary}
+          selectedSlot={selectedSlot}
+          customerName={customerName}
+          customerPhone={customerPhone}
+          submitting={submitting}
+          onBack={() => setFlowStep("slot")}
+          onChangeProducts={() => {
+            setSelectedSlotId(null);
+            setFlowStep("products");
+          }}
+          onCustomerNameChange={setCustomerName}
+          onCustomerPhoneChange={setCustomerPhone}
+          onSubmit={submit}
+        />
+      )}
 
-        <Button onClick={submit} className="h-14 shrink-0 text-base font-bold" disabled={cartCount === 0 || submitting}>
-          <Check className="mr-2 h-5 w-5" />
-          {submitting ? "Validation…" : cartCount === 0 ? "Panier vide" : `Valider ${cartCount} produit${cartCount > 1 ? "s" : ""}`}
-        </Button>
-
-        <div className="border-t pt-3">
-          <button
-            type="button"
-            onClick={() => setShowTodayOrders((open) => !open)}
-            className="flex w-full items-center justify-between rounded-lg py-1 text-left text-sm font-semibold"
-            aria-expanded={showTodayOrders}
-          >
-            <span>Commandes en cours ({todayOrders.length})</span>
-            <ChevronDown className={`h-4 w-4 transition-transform ${showTodayOrders ? "rotate-180" : ""}`} />
-          </button>
-          {showTodayOrders && todayOrders.length === 0 && (
-            <p className="mt-2 text-sm italic text-muted-foreground">Aucune commande en cours</p>
-          )}
-          {showTodayOrders && todayOrders.length > 0 && (
-            <ul className="mt-2 max-h-48 space-y-2 overflow-auto pr-1">
-              {todayOrders.map((o) => {
-                const oPaninos = paninoByOrder.get(o.id) ?? [];
-                const readyForPickup = readyOrderIds.has(o.id);
-                return (
-                  <li
-                    key={o.id}
-                    className={`rounded-lg border p-2 text-sm ${
-                      readyForPickup
-                        ? "border-status-ready/50 bg-status-ready/10"
-                        : "bg-background"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="font-semibold truncate">{o.customer_name}</div>
-                          {readyForPickup && (
-                            <span className="rounded-full bg-status-ready px-2 py-0.5 text-[10px] font-black text-white">
-                              PRÊTE
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatTime(o.requested_time)}
-                          {o.items && o.items.length > 0 && ` · ${o.items.length} pizza${o.items.length > 1 ? "s" : ""}`}
-                          {oPaninos.length > 0 && ` · ${oPaninos.length} Pani'NO`}
-                        </div>
-                        {o.customer_phone && (
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                            <a
-                              href={`tel:${o.customer_phone}`}
-                              onClick={(event) => event.stopPropagation()}
-                              className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 font-bold text-primary"
-                            >
-                              <PhoneCall className="h-3 w-3" /> Rappeler {formatPhoneNumber(o.customer_phone)}
-                            </a>
-                            <button
-                              type="button"
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                try {
-                                  await navigator.clipboard.writeText(o.customer_phone ?? "");
-                                  toast.success("Numéro copié");
-                                } catch {
-                                  toast.error("Impossible de copier le numéro");
-                                }
-                              }}
-                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 font-bold text-muted-foreground"
-                            >
-                              <Copy className="h-3 w-3" /> Copier
-                            </button>
-                          </div>
-                        )}
-                        {oPaninos.length > 0 && (
-                          <ul className="mt-1 space-y-0.5">
-                            {oPaninos.map((p) => (
-                              <li key={p.id} className="text-xs text-muted-foreground">
-                                {paninoDisplayName(p.product_key, p.product_name)}
-                                {friesLabel(p.fries_mode) && ` · ${friesLabel(p.fries_mode)}`}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                      {canDeleteOrder(o) && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Supprimer la commande"
-                          className="h-7 w-7 shrink-0 text-destructive"
-                          onClick={() => handleDeleteOrder(o.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-      </aside>
-
-      {/* Panel droit : catalogue */}
-      <section className="min-w-0">
-        <div className="sticky top-[3.55rem] z-20 mb-3 rounded-2xl border bg-background/95 p-2 shadow-sm backdrop-blur min-[720px]:top-[4.5rem]">
-          <div className="flex items-center gap-2">
-            <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted p-1">
-              <button
-                onClick={() => setCatalogTab("pizzas")}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold transition ${catalogTab === "pizzas" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background"}`}
-              >
-                <PizzaIcon className="h-4 w-4" /> Pizzas
-              </button>
-              <button
-                onClick={() => setCatalogTab("panino")}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold transition ${catalogTab === "panino" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background"}`}
-              >
-                <Sandwich className="h-4 w-4" /> Pani'NO
-              </button>
-            </div>
-            <label className="relative min-w-0 flex-1">
-              <span className="sr-only">Rechercher un produit</span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={catalogQuery}
-                onChange={(event) => setCatalogQuery(event.target.value)}
-                placeholder="Rechercher…"
-                className="h-12 bg-card pl-9"
-              />
-            </label>
-          </div>
-        </div>
-
-        {catalogTab === "pizzas" && (
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-            {filteredPizzas.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setEditing({ pizza: p })}
-                className="group flex min-h-24 overflow-hidden rounded-2xl border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
-              >
-                <div className="h-auto w-24 shrink-0 overflow-hidden bg-muted sm:w-28">
-                  {getPizzaImage(p.image_path) && (
-                    <img src={getPizzaImage(p.image_path)} alt={p.name} loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
-                  )}
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col justify-center p-3">
-                  <div className="font-bold leading-tight">{p.name}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{p.ingredients.join(" · ")}</div>
-                  <div className="mt-2 inline-flex items-center text-xs font-bold text-primary">
-                    <Plus className="mr-1 h-3.5 w-3.5" /> Ajouter
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {catalogTab === "panino" && (
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-            {filteredPaninoProducts.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setEditingPanino(p)}
-                className="group flex min-h-24 overflow-hidden rounded-2xl border bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
-              >
-                <div className="flex w-24 shrink-0 items-center justify-center bg-primary/10 text-primary sm:w-28">
-                  <Sandwich className="h-11 w-11" />
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col justify-center p-3">
-                  <div className="font-bold leading-tight">{p.name}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                    {p.key === "panino" && "Steak, tomates, oignons, roquette, cheddar"}
-                    {p.key === "fishno" && "Filet de poisson pané"}
-                    {p.key === "cornet_frites" && "Cornet de frites simple"}
-                  </div>
-                  <div className="mt-2 inline-flex items-center text-xs font-bold text-primary">
-                    <Plus className="mr-1 h-3.5 w-3.5" /> Ajouter
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {((catalogTab === "pizzas" && filteredPizzas.length === 0) ||
-          (catalogTab === "panino" && filteredPaninoProducts.length === 0)) && (
-          <div className="rounded-2xl border border-dashed bg-card px-4 py-12 text-center">
-            <Search className="mx-auto h-8 w-8 text-muted-foreground/60" />
-            <p className="mt-3 font-semibold">Aucun produit trouvé</p>
-            <p className="mt-1 text-sm text-muted-foreground">Essayez un autre nom ou ingrédient.</p>
-          </div>
-        )}
-      </section>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) handleScanFile(file);
+        }}
+      />
 
       <PizzaCustomizer
         open={!!editing}
@@ -795,7 +612,8 @@ function Caisse() {
         allIngredients={allIngredients}
         onClose={() => setEditing(null)}
         onAdd={(item) => {
-          setCart((c) => [...c, item]);
+          setCart((current) => [...current, item]);
+          setSelectedSlotId(null);
           setEditing(null);
           toast.success(`${item.pizza_name} ajoutée`);
         }}
@@ -807,111 +625,801 @@ function Caisse() {
         allIngredients={allIngredients}
         onClose={() => setEditingPanino(null)}
         onAdd={(item) => {
-          setPaninoCart((c) => [...c, item]);
+          setPaninoCart((current) => [...current, item]);
+          setSelectedSlotId(null);
           setEditingPanino(null);
           toast.success(`${item.product_name} ajouté`);
         }}
       />
-
-
-      </div>
     </div>
   );
 }
 
-function PizzaCapacityCard({
-  capacity,
-  requestedTime,
-  nextSlots,
-  onSelectSlot,
-}: {
-  capacity: PizzaCapacityResult;
-  requestedTime: Date;
-  nextSlots: Date[];
-  onSelectSlot: (slot: Date) => void;
-}) {
-  const isIdle = capacity.status === "idle";
-  const isBlocked = capacity.status === "blocked";
-  const isWarning = capacity.status === "warning";
-  const idleFull = isIdle && capacity.remainingBeforeOrder <= 0;
-  const idleTight = isIdle && capacity.remainingBeforeOrder === 1;
-  const visuallyBlocked = isBlocked || idleFull;
-  const visuallyWarning = isWarning || idleTight;
-  const tone =
-    visuallyBlocked ? "border-destructive/50 bg-destructive/10 text-destructive"
-    : visuallyWarning ? "border-status-prepare/50 bg-status-prepare/10 text-status-prepare"
-    : "border-secondary/50 bg-secondary/10 text-secondary";
-  const Icon = visuallyBlocked ? AlertTriangle : visuallyWarning ? Clock : CheckCircle2;
-  const placesText = `${Math.max(0, capacity.remainingBeforeOrder)} place${Math.max(0, capacity.remainingBeforeOrder) > 1 ? "s" : ""}`;
-  const cartText = `${capacity.requestedPizzas} pizza${capacity.requestedPizzas > 1 ? "s" : ""}`;
-  const prepText = capacity.prepStartTime
-    ? capacity.minutesUntilPrepStart !== null && capacity.minutesUntilPrepStart <= 0
-      ? "Préparation à lancer maintenant"
-      : `Préparation à ${formatTime(capacity.prepStartTime)}`
-    : null;
-  const conflicts = capacity.overlappingOrders.slice(0, 3);
+function CashierStepper({ step }: { step: CashierFlowStep }) {
+  const steps: Array<{ id: CashierFlowStep; label: string }> = [
+    { id: "products", label: "Produits" },
+    { id: "slot", label: "Créneau" },
+    { id: "client", label: "Client" },
+  ];
+  const currentIndex = steps.findIndex((item) => item.id === step);
 
   return (
-    <div className={`rounded-xl border p-3 text-sm ${tone}`}>
-      <div className="flex items-start gap-2">
-        <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <div className="font-bold">
-            {isIdle && !idleFull && `Capacité pizza à ${formatTime(requestedTime)}`}
-            {idleFull && `Créneau pizza chargé à ${formatTime(requestedTime)}`}
-            {!isIdle && !isBlocked && `Pizza OK pour ${formatTime(requestedTime)}`}
-            {isBlocked && `Conseil : proposer un autre horaire`}
-          </div>
-          <p className="mt-1 text-xs leading-relaxed text-foreground/75">
-            {isIdle && !idleFull && `${placesText} disponible${Math.max(0, capacity.remainingBeforeOrder) > 1 ? "s" : ""} au four sur ce créneau.`}
-            {idleFull && "Le four est déjà complet sur ce créneau pour les pizzas. La commande reste possible si le client insiste."}
-            {!isIdle && !isBlocked && `${cartText} au panier : il restera ${Math.max(0, capacity.remainingAfterOrder)} place${Math.max(0, capacity.remainingAfterOrder) > 1 ? "s" : ""}.`}
-            {isBlocked && `${cartText} au panier, mais seulement ${placesText} disponible${Math.max(0, capacity.remainingBeforeOrder) > 1 ? "s" : ""}. La caissière peut quand même valider.`}
-          </p>
-          {!isIdle && prepText && (
-            <p className="mt-1 text-xs font-semibold text-foreground/80">
-              {prepText}
-              {capacity.minutesUntilPrepStart !== null && capacity.minutesUntilPrepStart > 0 && (
-                <> · dans {capacity.minutesUntilPrepStart} min</>
-              )}
+    <ol className="mx-auto grid max-w-5xl grid-cols-3 gap-2 rounded-2xl border bg-card p-2 shadow-sm">
+      {steps.map((item, index) => {
+        const active = item.id === step;
+        const done = index < currentIndex;
+        return (
+          <li
+            key={item.id}
+            className={`rounded-xl px-3 py-2 text-center text-xs font-black uppercase tracking-wide transition sm:text-sm ${
+              active
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : done
+                  ? "bg-secondary/15 text-secondary"
+                  : "bg-muted/50 text-muted-foreground"
+            }`}
+          >
+            {index + 1}. {item.label}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function ProductsStep({
+  stock,
+  catalogTab,
+  catalogQuery,
+  pizzas,
+  paninoProducts,
+  cart,
+  paninoCart,
+  draftSummary,
+  scanning,
+  onCatalogTabChange,
+  onSearchChange,
+  onScanClick,
+  onEditPizza,
+  onEditPanino,
+  onRemovePizza,
+  onDuplicatePizza,
+  onRemovePanino,
+  onDuplicatePanino,
+  onValidateProducts,
+}: {
+  stock: number;
+  catalogTab: CashierCatalogTab;
+  catalogQuery: string;
+  pizzas: Pizza[];
+  paninoProducts: PaninoProduct[];
+  cart: DraftItem[];
+  paninoCart: DraftPaninoItem[];
+  draftSummary: ReturnType<typeof summarizeCashierDraft>;
+  scanning: boolean;
+  onCatalogTabChange: (tab: CashierCatalogTab) => void;
+  onSearchChange: (value: string) => void;
+  onScanClick: () => void;
+  onEditPizza: (pizza: Pizza) => void;
+  onEditPanino: (product: PaninoProduct) => void;
+  onRemovePizza: (index: number) => void;
+  onDuplicatePizza: (index: number) => void;
+  onRemovePanino: (index: number) => void;
+  onDuplicatePanino: (index: number) => void;
+  onValidateProducts: () => void;
+}) {
+  const emptyCatalog = catalogTab === "pizzas" ? pizzas.length === 0 : paninoProducts.length === 0;
+
+  return (
+    <div className="grid gap-3 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] min-[900px]:items-start">
+      <section className="min-w-0 rounded-2xl border bg-card p-3 shadow-sm sm:p-4">
+        <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-black uppercase text-primary">
+              <ShoppingBasket className="h-4 w-4" />
+              Étape 1
+            </div>
+            <h1 className="mt-2 text-2xl font-black">Choix des produits</h1>
+            <p className="text-sm text-muted-foreground">
+              Ajoutez les produits, bases, suppléments et retraits avant de choisir le créneau.
             </p>
-          )}
-          {conflicts.length > 0 && (
-            <div className="mt-2 rounded-lg bg-background/70 px-2 py-1.5 text-xs text-foreground/75">
-              Déjà prévu : {conflicts.map((order) => `${order.customer_name} (${order.pizzaCount})`).join(", ")}
-              {capacity.overlappingOrders.length > conflicts.length && "…"}
+          </div>
+          <div className="rounded-2xl border bg-background px-4 py-3 text-right">
+            <div className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">
+              Stock pâtons
             </div>
-          )}
-          {isBlocked && nextSlots.length > 0 && (
-            <div className="mt-3">
-              <div className="mb-1 text-xs font-bold uppercase text-foreground/70">Horaires conseillés</div>
-              <div className="flex flex-wrap gap-2">
-                {nextSlots.map((slot) => (
+            <div
+              className={`text-3xl font-black ${stock < 20 ? "text-destructive" : "text-secondary"}`}
+            >
+              {stock}
+            </div>
+          </div>
+        </div>
+
+        <div className="sticky top-[3.55rem] z-20 mb-3 rounded-2xl border bg-background/95 p-2 shadow-sm backdrop-blur">
+          <div className="flex flex-col gap-2 min-[760px]:flex-row min-[760px]:items-center">
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 min-[520px]:grid-cols-4 min-[760px]:w-auto">
+              {[
+                { id: "pizzas", label: "Pizzas", icon: PizzaIcon },
+                { id: "panino", label: "Pani'NO", icon: Sandwich },
+                { id: "fishno", label: "Fish & NO", icon: Sandwich },
+                { id: "frites", label: "Frites", icon: Sandwich },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                return (
                   <button
-                    key={slot.toISOString()}
+                    key={tab.id}
                     type="button"
-                    onClick={() => onSelectSlot(slot)}
-                    className="rounded-full border bg-background px-3 py-1 text-xs font-bold text-foreground shadow-sm"
+                    onClick={() => onCatalogTabChange(tab.id as CashierCatalogTab)}
+                    className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-bold transition active:scale-[0.98] ${
+                      catalogTab === tab.id
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-background"
+                    }`}
                   >
-                    {formatTime(slot)}
+                    <Icon className="h-4 w-4" />
+                    {tab.label}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">Rechercher un produit</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={catalogQuery}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Rechercher…"
+                className="h-12 bg-card pl-9"
+              />
+            </label>
+            <Button variant="outline" className="h-12" onClick={onScanClick} disabled={scanning}>
+              {scanning ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Analyse…
+                </>
+              ) : (
+                <>
+                  <ScanLine className="mr-2 h-4 w-4" />
+                  Scanner
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {catalogTab === "pizzas" ? (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
+            {pizzas.map((pizza) => (
+              <button
+                key={pizza.id}
+                type="button"
+                onClick={() => onEditPizza(pizza)}
+                className="group flex min-h-24 overflow-hidden rounded-2xl border bg-background text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
+              >
+                <div className="h-auto w-24 shrink-0 overflow-hidden bg-muted sm:w-28">
+                  {getPizzaImage(pizza.image_path) && (
+                    <img
+                      src={getPizzaImage(pizza.image_path)}
+                      alt={pizza.name}
+                      loading="lazy"
+                      className="h-full w-full object-cover transition group-hover:scale-105"
+                    />
+                  )}
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col justify-center p-3">
+                  <div className="font-bold leading-tight">{pizza.name}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                    {pizza.ingredients.join(" · ")}
+                  </div>
+                  <div className="mt-2 inline-flex items-center text-xs font-bold text-primary">
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    Ajouter
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 2xl:grid-cols-3">
+            {paninoProducts.map((product) => (
+              <button
+                key={product.id}
+                type="button"
+                onClick={() => onEditPanino(product)}
+                className="group flex min-h-24 overflow-hidden rounded-2xl border bg-background text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md active:scale-[0.99]"
+              >
+                <div className="flex w-24 shrink-0 items-center justify-center bg-primary/10 text-primary sm:w-28">
+                  <Sandwich className="h-11 w-11" />
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col justify-center p-3">
+                  <div className="font-bold leading-tight">
+                    {paninoDisplayName(product.key, product.name)}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                    {productDescription(product.key)}
+                  </div>
+                  <div className="mt-2 inline-flex items-center text-xs font-bold text-primary">
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    Ajouter
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {emptyCatalog && (
+          <div className="rounded-2xl border border-dashed bg-background px-4 py-12 text-center">
+            <Search className="mx-auto h-8 w-8 text-muted-foreground/60" />
+            <p className="mt-3 font-semibold">Aucun produit trouvé</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Essayez une autre catégorie ou recherche.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <DraftBasketCard
+        cart={cart}
+        paninoCart={paninoCart}
+        draftSummary={draftSummary}
+        onRemovePizza={onRemovePizza}
+        onDuplicatePizza={onDuplicatePizza}
+        onRemovePanino={onRemovePanino}
+        onDuplicatePanino={onDuplicatePanino}
+        onValidateProducts={onValidateProducts}
+      />
+    </div>
+  );
+}
+
+function DraftBasketCard({
+  cart,
+  paninoCart,
+  draftSummary,
+  onRemovePizza,
+  onDuplicatePizza,
+  onRemovePanino,
+  onDuplicatePanino,
+  onValidateProducts,
+}: {
+  cart: DraftItem[];
+  paninoCart: DraftPaninoItem[];
+  draftSummary: ReturnType<typeof summarizeCashierDraft>;
+  onRemovePizza: (index: number) => void;
+  onDuplicatePizza: (index: number) => void;
+  onRemovePanino: (index: number) => void;
+  onDuplicatePanino: (index: number) => void;
+  onValidateProducts: () => void;
+}) {
+  const cartEmpty = draftSummary.totalProducts === 0;
+
+  return (
+    <aside className="rounded-2xl border bg-card p-3 shadow-sm min-[900px]:sticky min-[900px]:top-[4.75rem] sm:p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-black">Panier</h2>
+          <p className="text-xs text-muted-foreground">Compact, modifiable, conservé au retour.</p>
+        </div>
+        <span className="rounded-full bg-primary px-3 py-1 text-sm font-black text-primary-foreground">
+          {draftSummary.totalProducts}
+        </span>
+      </div>
+
+      <DraftSummaryStrip summary={draftSummary} />
+
+      {cartEmpty ? (
+        <div className="mt-3 rounded-xl border border-dashed bg-muted/35 px-3 py-8 text-center">
+          <p className="text-sm font-semibold text-muted-foreground">Panier vide</p>
+          <p className="mt-1 text-xs text-muted-foreground">Touchez un produit pour commencer.</p>
+        </div>
+      ) : (
+        <ul className="mt-3 max-h-[46vh] space-y-2 overflow-auto pr-1">
+          {cart.map((item, index) => (
+            <li key={`pizza-${index}`} className="rounded-xl border bg-background p-2 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold">🍕 {item.pizza_name}</div>
+                  <ProductDetails item={item} />
+                </div>
+                <QuantityControls
+                  onDuplicate={() => onDuplicatePizza(index)}
+                  onRemove={() => onRemovePizza(index)}
+                />
+              </div>
+            </li>
+          ))}
+          {paninoCart.map((item, index) => (
+            <li key={`panino-${index}`} className="rounded-xl border bg-background p-2 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold">
+                    {paninoDisplayName(item.product_key, item.product_name)}
+                  </div>
+                  <PaninoDetails item={item} />
+                </div>
+                <QuantityControls
+                  onDuplicate={() => onDuplicatePanino(index)}
+                  onRemove={() => onRemovePanino(index)}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Button
+        onClick={onValidateProducts}
+        className="mt-3 h-14 w-full text-base font-black"
+        disabled={cartEmpty}
+      >
+        Valider les produits
+      </Button>
+    </aside>
+  );
+}
+
+function SlotChoiceStep({
+  summary,
+  slotOptions,
+  expandedSlotId,
+  onBack,
+  onChoose,
+  onToggleDetails,
+}: {
+  summary: ReturnType<typeof summarizeCashierDraft>;
+  slotOptions: CashierSlotOption[];
+  expandedSlotId: string | null;
+  onBack: () => void;
+  onChoose: (slot: CashierSlotOption) => void;
+  onToggleDetails: (slotId: string) => void;
+}) {
+  return (
+    <section className="mx-auto max-w-6xl space-y-3">
+      <StepHeader
+        icon={<CalendarClock className="h-5 w-5" />}
+        step="Étape 2"
+        title="Choisir le meilleur créneau"
+        description="Le KDS conseille avec la charge réelle, mais tous les créneaux restent sélectionnables."
+      />
+      <DraftSummaryStrip summary={summary} />
+      <div className="grid gap-3 lg:grid-cols-2">
+        {slotOptions.map((slot) => (
+          <SlotOptionCard
+            key={slot.id}
+            slot={slot}
+            expanded={expandedSlotId === slot.id}
+            onToggleDetails={() => onToggleDetails(slot.id)}
+            onChoose={() => onChoose(slot)}
+          />
+        ))}
+      </div>
+      {slotOptions.length === 0 && (
+        <div className="rounded-2xl border border-dashed bg-card px-4 py-10 text-center text-muted-foreground">
+          Aucun créneau calculable pour le moment.
+        </div>
+      )}
+      <Button variant="outline" className="h-12 min-w-40" onClick={onBack}>
+        <ArrowLeft className="mr-2 h-4 w-4" />
+        Retour
+      </Button>
+    </section>
+  );
+}
+
+function SlotOptionCard({
+  slot,
+  expanded,
+  onToggleDetails,
+  onChoose,
+}: {
+  slot: CashierSlotOption;
+  expanded: boolean;
+  onToggleDetails: () => void;
+  onChoose: () => void;
+}) {
+  const tone = loadTone(slot.level);
+  return (
+    <article className={`rounded-2xl border p-3 shadow-sm ${tone.card}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-3xl font-black">{slot.label}</div>
+            {slot.recommended && (
+              <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-black uppercase text-white">
+                Conseillé
+              </span>
+            )}
+            <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${tone.badge}`}>
+              {loadLabel(slot.level)}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pizzas : {slot.pizza.already} déjà + {slot.pizza.added} panier ={" "}
+            <span className="font-black text-foreground">
+              {slot.pizza.total}/{slot.pizza.capacity}
+            </span>
+          </p>
+        </div>
+        <Button className="h-12 shrink-0 px-4 font-black" onClick={onChoose}>
+          {slot.level === "tendu" ? "Choisir quand même" : `Choisir ${slot.label}`}
+        </Button>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-xs min-[520px]:grid-cols-3">
+        <LoadPill
+          label="Pani'NO"
+          value={`${slot.panino.already} + ${slot.panino.added} = ${slot.panino.total}`}
+          muted={slot.panino.added === 0 && slot.panino.already === 0}
+        />
+        <LoadPill
+          label="Fish & NO"
+          value={`${slot.fish.already} + ${slot.fish.added} = ${slot.fish.total}/${slot.fish.capacity}`}
+          muted={slot.fish.added === 0 && slot.fish.already === 0}
+        />
+        <LoadPill
+          label="Friteuse"
+          value={`${slot.fries.totalFries} frites · ${slot.fries.totalGrenailles} grenailles`}
+          muted={slot.fries.totalFries === 0 && slot.fries.totalGrenailles === 0}
+        />
+      </div>
+
+      {slot.warnings.length > 0 && (
+        <div className="mt-3 rounded-xl bg-background/75 p-2 text-sm font-semibold text-foreground">
+          {slot.warnings[0]}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onToggleDetails}
+          className="rounded-full border bg-background px-3 py-2 text-xs font-black text-muted-foreground active:scale-[0.98]"
+        >
+          {expanded ? "Masquer le détail" : "Voir les commandes prévues"}
+        </button>
+        <span className="text-xs text-muted-foreground">
+          {slot.existingOrders.length} commande{slot.existingOrders.length > 1 ? "s" : ""} dans la
+          zone
+        </span>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 space-y-2 rounded-xl border bg-background p-2">
+          {slot.existingOrders.length === 0 ? (
+            <p className="py-2 text-center text-sm text-muted-foreground">
+              Aucune commande déjà prévue.
+            </p>
+          ) : (
+            slot.existingOrders.map((order) => (
+              <div key={order.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold">{order.customerName}</span>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {formatTime(order.requestedTime)}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {order.pizzaCount} pizza{order.pizzaCount > 1 ? "s" : ""}
+                  {order.paninoCount > 0 && ` · ${order.paninoCount} Pani'NO`}
+                  {order.fishCount > 0 && ` · ${order.fishCount} Fish & NO`}
+                  {order.friesCount > 0 && ` · ${order.friesCount} frites`}
+                  {order.grenaillesCount > 0 && ` · ${order.grenaillesCount} grenailles`}
+                </div>
+              </div>
+            ))
           )}
-          {!isIdle && capacity.prepStartTime && minutesUntil(capacity.prepStartTime) <= 0 && !isBlocked && (
-            <p className="mt-2 rounded-lg bg-background/70 px-2 py-1.5 text-xs font-semibold text-foreground/80">
-              Délai serré : prévenir la cuisine si la commande est acceptée.
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ClientStep({
+  summary,
+  selectedSlot,
+  customerName,
+  customerPhone,
+  submitting,
+  onBack,
+  onChangeProducts,
+  onCustomerNameChange,
+  onCustomerPhoneChange,
+  onSubmit,
+}: {
+  summary: ReturnType<typeof summarizeCashierDraft>;
+  selectedSlot: CashierSlotOption | null;
+  customerName: string;
+  customerPhone: string;
+  submitting: boolean;
+  onBack: () => void;
+  onChangeProducts: () => void;
+  onCustomerNameChange: (value: string) => void;
+  onCustomerPhoneChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <section className="mx-auto max-w-4xl space-y-3">
+      <StepHeader
+        icon={<UserRound className="h-5 w-5" />}
+        step="Étape 3"
+        title="Informations client"
+        description="Dernière vérification : le créneau reste recalculé en temps réel jusqu'à la création."
+      />
+      <DraftSummaryStrip summary={summary} />
+      {selectedSlot && (
+        <div className={`rounded-2xl border p-3 shadow-sm ${loadTone(selectedSlot.level).card}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-black uppercase text-muted-foreground">
+                Créneau sélectionné
+              </div>
+              <div className="text-3xl font-black">{selectedSlot.label}</div>
+              <p className="text-sm text-muted-foreground">
+                Pizzas après validation : {selectedSlot.pizza.total}/{selectedSlot.pizza.capacity}
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-black uppercase ${loadTone(selectedSlot.level).badge}`}
+            >
+              {loadLabel(selectedSlot.level)}
+            </span>
+          </div>
+          {selectedSlot.warnings.length > 0 && (
+            <p className="mt-2 rounded-xl bg-background/75 p-2 text-sm font-semibold">
+              {selectedSlot.warnings[0]}
             </p>
           )}
         </div>
+      )}
+
+      <div className="rounded-2xl border bg-card p-4 shadow-sm">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="cashier-customer-name">Nom de la commande</Label>
+            <Input
+              id="cashier-customer-name"
+              value={customerName}
+              onChange={(event) => onCustomerNameChange(event.target.value)}
+              placeholder="Ex : Martin"
+              className="mt-1 h-14 text-lg font-bold"
+              autoFocus
+            />
+          </div>
+          <div>
+            <Label htmlFor="cashier-customer-phone">Numéro de téléphone (facultatif)</Label>
+            <Input
+              id="cashier-customer-phone"
+              value={customerPhone}
+              onChange={(event) => onCustomerPhoneChange(event.target.value)}
+              placeholder="Ex : 06 12 34 56 78"
+              inputMode="tel"
+              className="mt-1 h-14 text-lg"
+            />
+            {customerPhone && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Enregistré comme {formatPhoneNumber(customerPhone)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" className="h-12" onClick={onBack}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Retour
+            </Button>
+            <Button variant="ghost" className="h-12" onClick={onChangeProducts}>
+              Modifier les produits
+            </Button>
+          </div>
+          <Button
+            className="h-14 px-8 text-base font-black"
+            onClick={onSubmit}
+            disabled={!customerName.trim() || submitting || !selectedSlot}
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Création…
+              </>
+            ) : (
+              <>
+                <Check className="mr-2 h-5 w-5" />
+                Créer la commande
+              </>
+            )}
+          </Button>
+        </div>
       </div>
+    </section>
+  );
+}
+
+function StepHeader({
+  icon,
+  step,
+  title,
+  description,
+}: {
+  icon: ReactNode;
+  step: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border bg-card p-4 shadow-sm">
+      <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-black uppercase text-primary">
+        {icon}
+        {step}
+      </div>
+      <h1 className="mt-2 text-2xl font-black">{title}</h1>
+      <p className="text-sm text-muted-foreground">{description}</p>
     </div>
   );
 }
 
+function DraftSummaryStrip({ summary }: { summary: ReturnType<typeof summarizeCashierDraft> }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-card p-2 shadow-sm sm:grid-cols-5">
+      <SummaryPill label="Produits" value={summary.totalProducts} />
+      <SummaryPill label="Pizzas" value={summary.pizzaCount} />
+      <SummaryPill label="Pani'NO" value={summary.paninoCount} />
+      <SummaryPill label="Fish & NO" value={summary.fishCount} />
+      <SummaryPill label="Pâtons" value={summary.doughCount} />
+    </div>
+  );
+}
+
+function SummaryPill({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl bg-muted/60 px-3 py-2 text-center">
+      <div className="text-[10px] font-black uppercase text-muted-foreground">{label}</div>
+      <div className="text-xl font-black">{value}</div>
+    </div>
+  );
+}
+
+function LoadPill({ label, value, muted }: { label: string; value: string; muted: boolean }) {
+  return (
+    <div className={`rounded-xl border bg-background px-3 py-2 ${muted ? "opacity-55" : ""}`}>
+      <div className="font-black uppercase text-muted-foreground">{label}</div>
+      <div className="mt-0.5 text-sm font-bold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function QuantityControls({
+  onDuplicate,
+  onRemove,
+}: {
+  onDuplicate: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <Button
+        size="icon"
+        variant="outline"
+        aria-label="Ajouter une unité"
+        className="h-9 w-9"
+        onClick={onDuplicate}
+      >
+        <Plus className="h-4 w-4" />
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Retirer une unité"
+        className="h-9 w-9 text-destructive"
+        onClick={onRemove}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+function ProductDetails({ item }: { item: DraftItem }) {
+  const base = getPizzaBaseInfoFromKey(item.base);
+
+  return (
+    <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+      {item.base && <div>Base : {base.label}</div>}
+      {item.extras.length > 0 && (
+        <div className="font-semibold text-secondary">+ {item.extras.join(", ")}</div>
+      )}
+      {item.removed.length > 0 && (
+        <div className="font-semibold text-destructive">Sans {item.removed.join(", ")}</div>
+      )}
+      {item.cut_into && (
+        <div className="font-semibold text-primary">À couper en {item.cut_into}</div>
+      )}
+    </div>
+  );
+}
+
+function PaninoDetails({ item }: { item: DraftPaninoItem }) {
+  return (
+    <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+      {item.base && <div>Base : {item.base}</div>}
+      {friesLabel(item.fries_mode) && (
+        <div className="font-semibold text-primary">{friesLabel(item.fries_mode)}</div>
+      )}
+      {item.side && <div>Accompagnement : {item.side}</div>}
+      {item.sauces.length > 0 && (
+        <div>
+          Sauces :{" "}
+          {item.sauces.length === 2
+            ? `moitié ${item.sauces[0]} / moitié ${item.sauces[1]}`
+            : item.sauces[0]}
+        </div>
+      )}
+      {item.extras.length > 0 && (
+        <div className="font-semibold text-secondary">+ {item.extras.join(", ")}</div>
+      )}
+      {item.removed.length > 0 && (
+        <div className="font-semibold text-destructive">Sans {item.removed.join(", ")}</div>
+      )}
+    </div>
+  );
+}
+
+function loadTone(level: CashierLoadLevel) {
+  if (level === "tendu") {
+    return {
+      card: "border-destructive/45 bg-destructive/10",
+      badge: "bg-destructive text-white",
+    };
+  }
+  if (level === "charge") {
+    return {
+      card: "border-primary/35 bg-primary/10",
+      badge: "bg-primary text-primary-foreground",
+    };
+  }
+  if (level === "actif") {
+    return {
+      card: "border-status-prepare/40 bg-status-prepare/10",
+      badge: "bg-status-prepare text-white",
+    };
+  }
+  return {
+    card: "border-secondary/35 bg-secondary/10",
+    badge: "bg-secondary text-white",
+  };
+}
+
+function loadLabel(level: CashierLoadLevel) {
+  if (level === "tendu") return "Tendu";
+  if (level === "charge") return "Chargé";
+  if (level === "actif") return "Actif";
+  return "Calme";
+}
+
+function getPaninoCatalogTab(productKey: string): Exclude<CashierCatalogTab, "pizzas"> {
+  if (productKey === "fishno") return "fishno";
+  if (productKey === "cornet_frites") return "frites";
+  return "panino";
+}
+
+function productDescription(productKey: string) {
+  if (productKey === "panino") return "Pain Pani'NO, steak, sauces et options";
+  if (productKey === "fishno") return "Poisson pané, accompagnement et sauces";
+  if (productKey === "cornet_frites") return "Cornet de frites";
+  return "Produit personnalisable";
+}
+
 function PizzaCustomizer({
-  open, pizza, allIngredients, onClose, onAdd,
+  open,
+  pizza,
+  allIngredients,
+  onClose,
+  onAdd,
 }: {
   open: boolean;
   pizza: Pizza | null;
@@ -919,8 +1427,11 @@ function PizzaCustomizer({
   onClose: () => void;
   onAdd: (item: DraftItem) => void;
 }) {
-  const defaultBase = pizza ? getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]) : "unknown";
-  const selectableDefaultBase = defaultBase === "none" || defaultBase === "unknown" ? null : defaultBase;
+  const defaultBase = pizza
+    ? getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza])
+    : "unknown";
+  const selectableDefaultBase =
+    defaultBase === "none" || defaultBase === "unknown" ? null : defaultBase;
   const [base, setBase] = useState<PizzaBaseKey | null>(selectableDefaultBase);
   const [extras, setExtras] = useState<string[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -947,13 +1458,19 @@ function PizzaCustomizer({
         <div className="space-y-4">
           <Section title="Base demandée">
             {PIZZA_BASE_OPTIONS.map((option) => (
-              <Chip key={option.key} active={base === option.key} onClick={() => setBase(option.key)}>
+              <Chip
+                key={option.key}
+                active={base === option.key}
+                onClick={() => setBase(option.key)}
+              >
                 {option.label}
               </Chip>
             ))}
           </Section>
           <div>
-            <div className="text-sm font-semibold mb-2 flex items-center gap-2"><Minus className="h-4 w-4 text-destructive" /> Retirer</div>
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Minus className="h-4 w-4 text-destructive" /> Retirer
+            </div>
             <div className="flex flex-wrap gap-2">
               {pizza.ingredients.map((ing) => (
                 <button
@@ -967,7 +1484,9 @@ function PizzaCustomizer({
             </div>
           </div>
           <div>
-            <div className="text-sm font-semibold mb-2 flex items-center gap-2"><Plus className="h-4 w-4 text-secondary" /> Suppléments</div>
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <Plus className="h-4 w-4 text-secondary" /> Suppléments
+            </div>
             <div className="flex flex-wrap gap-2 max-h-48 overflow-auto">
               {allIngredients.map((ing) => (
                 <button
@@ -996,8 +1515,23 @@ function PizzaCustomizer({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Annuler</Button>
-          <Button onClick={() => onAdd(buildPizzaDraftItem(pizza, base !== defaultBase ? base : null, extras, removed, cutInto))} className="h-11">
+          <Button variant="outline" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button
+            onClick={() =>
+              onAdd(
+                buildPizzaDraftItem(
+                  pizza,
+                  base !== defaultBase ? base : null,
+                  extras,
+                  removed,
+                  cutInto,
+                ),
+              )
+            }
+            className="h-11"
+          >
             <Plus className="mr-2 h-4 w-4" /> Ajouter au panier
           </Button>
         </DialogFooter>
@@ -1021,7 +1555,10 @@ function isMissingOrderItemBaseColumn(error: unknown) {
     .join(" ")
     .toLocaleLowerCase("fr");
 
-  return text.includes("base") && (text.includes("column") || text.includes("schema cache") || text.includes("pgrst204"));
+  return (
+    text.includes("base") &&
+    (text.includes("column") || text.includes("schema cache") || text.includes("pgrst204"))
+  );
 }
 
 function buildPizzaDraftItem(
@@ -1031,7 +1568,9 @@ function buildPizzaDraftItem(
   removed: string[],
   cutInto: number | null,
 ): DraftItem {
-  const defaultBase = getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [pizza]);
+  const defaultBase = getDefaultPizzaBaseKey({ pizza_id: pizza.id, pizza_name: pizza.name }, [
+    pizza,
+  ]);
   const inference = inferRequestedBase({
     defaultBase,
     explicitBase,
@@ -1075,24 +1614,25 @@ function parseLocalTime(t: string): Date {
 
   return d;
 }
-function isTimeInPast(t: string): boolean {
-  if (!/^\d{2}:\d{2}$/.test(t)) return false;
-  return parseLocalTime(t).getTime() < Date.now();
-}
-
 function readDisabledPaninoKeys() {
   if (typeof window === "undefined") return new Set<string>();
   try {
     const stored = window.localStorage.getItem(LOCAL_CONTROL_KEY);
     const parsed = stored ? JSON.parse(stored) : {};
-    return new Set<string>(Array.isArray(parsed.disabledPaninoKeys) ? parsed.disabledPaninoKeys : []);
+    return new Set<string>(
+      Array.isArray(parsed.disabledPaninoKeys) ? parsed.disabledPaninoKeys : [],
+    );
   } catch {
     return new Set<string>();
   }
 }
 
 function PaninoCustomizer({
-  product, options, allIngredients, onClose, onAdd,
+  product,
+  options,
+  allIngredients,
+  onClose,
+  onAdd,
 }: {
   product: PaninoProduct | null;
   options: PaninoOption[];
@@ -1107,9 +1647,13 @@ function PaninoCustomizer({
   const [removed, setRemoved] = useState<string[]>([]);
   const [extras, setExtras] = useState<string[]>([]);
 
-  useMemo(() => {
-    setBase(null); setFriesMode(null); setSide(null);
-    setSauces([]); setRemoved([]); setExtras([]);
+  useEffect(() => {
+    setBase(null);
+    setFriesMode(null);
+    setSide(null);
+    setSauces([]);
+    setRemoved([]);
+    setExtras([]);
   }, [product?.id]);
 
   if (!product) return null;
@@ -1126,10 +1670,11 @@ function PaninoCustomizer({
   const extrasOpts = byKind("extra");
   const sharedExtrasAllowed = product.key === "panino" || product.key === "fishno";
   const extraNames = Array.from(
-    new Set([
-      ...extrasOpts.map((option) => option.name),
-      ...(sharedExtrasAllowed ? allIngredients : []),
-    ].map((ingredient) => ingredient.trim()).filter(Boolean)),
+    new Set(
+      [...extrasOpts.map((option) => option.name), ...(sharedExtrasAllowed ? allIngredients : [])]
+        .map((ingredient) => ingredient.trim())
+        .filter(Boolean),
+    ),
   ).sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
 
   const toggleSauce = (name: string) => {
@@ -1173,7 +1718,9 @@ function PaninoCustomizer({
           {bases.length > 0 && (
             <Section title="Base (obligatoire)">
               {bases.map((o) => (
-                <Chip key={o.id} active={base === o.name} onClick={() => setBase(o.name)}>{o.name}</Chip>
+                <Chip key={o.id} active={base === o.name} onClick={() => setBase(o.name)}>
+                  {o.name}
+                </Chip>
               ))}
             </Section>
           )}
@@ -1181,7 +1728,9 @@ function PaninoCustomizer({
           {friesModes.length > 0 && (
             <Section title="Service des frites (obligatoire)">
               {friesModes.map((o) => (
-                <Chip key={o.id} active={friesMode === o.name} onClick={() => setFriesMode(o.name)}>{o.name}</Chip>
+                <Chip key={o.id} active={friesMode === o.name} onClick={() => setFriesMode(o.name)}>
+                  {o.name}
+                </Chip>
               ))}
             </Section>
           )}
@@ -1189,7 +1738,9 @@ function PaninoCustomizer({
           {sides.length > 0 && (
             <Section title="Accompagnement (obligatoire)">
               {sides.map((o) => (
-                <Chip key={o.id} active={side === o.name} onClick={() => setSide(o.name)}>{o.name}</Chip>
+                <Chip key={o.id} active={side === o.name} onClick={() => setSide(o.name)}>
+                  {o.name}
+                </Chip>
               ))}
             </Section>
           )}
@@ -1197,7 +1748,13 @@ function PaninoCustomizer({
           {saucesOpts.length > 0 && (
             <Section title="Sauces (jusqu'à 2 — incluses, sans supplément)">
               {saucesOpts.map((o) => (
-                <Chip key={o.id} active={sauces.includes(o.name)} onClick={() => toggleSauce(o.name)}>{o.name}</Chip>
+                <Chip
+                  key={o.id}
+                  active={sauces.includes(o.name)}
+                  onClick={() => toggleSauce(o.name)}
+                >
+                  {o.name}
+                </Chip>
               ))}
               {sauces.length === 2 && (
                 <div className="w-full text-xs font-semibold text-primary mt-1">
@@ -1235,12 +1792,21 @@ function PaninoCustomizer({
             </Section>
           )}
 
-          {bases.length === 0 && friesModes.length === 0 && sides.length === 0 && saucesOpts.length === 0 && removables.length === 0 && extraNames.length === 0 && (
-            <p className="text-sm text-muted-foreground italic">Produit simple — aucune option à configurer.</p>
-          )}
+          {bases.length === 0 &&
+            friesModes.length === 0 &&
+            sides.length === 0 &&
+            saucesOpts.length === 0 &&
+            removables.length === 0 &&
+            extraNames.length === 0 && (
+              <p className="text-sm text-muted-foreground italic">
+                Produit simple — aucune option à configurer.
+              </p>
+            )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Annuler</Button>
+          <Button variant="outline" onClick={onClose}>
+            Annuler
+          </Button>
           <Button onClick={handleAdd} disabled={!canSubmit} className="h-11">
             <Plus className="mr-2 h-4 w-4" /> Ajouter au panier
           </Button>
@@ -1250,16 +1816,35 @@ function PaninoCustomizer({
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
+function Section({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div>
-      <div className="text-sm font-semibold mb-2 flex items-center gap-2">{icon}{title}</div>
+      <div className="text-sm font-semibold mb-2 flex items-center gap-2">
+        {icon}
+        {title}
+      </div>
       <div className="flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
