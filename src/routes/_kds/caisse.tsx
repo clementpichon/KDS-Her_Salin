@@ -279,10 +279,6 @@ function Caisse() {
     return product.name.toLocaleLowerCase("fr").includes(normalizedCatalogQuery);
   });
   const requestedDate = isValidLocalTime(requestedTime) ? parseLocalTime(requestedTime) : null;
-  const slotSearchStart =
-    requestedDate && requestedDate.getTime() > Date.now() + 15 * 60 * 1000
-      ? new Date(requestedDate.getTime() - 15 * 60 * 1000)
-      : new Date();
   const slotOptions =
     settings && draftSummary.totalProducts > 0
       ? buildCashierSlotOptions({
@@ -291,7 +287,7 @@ function Caisse() {
           settings,
           cart,
           paninoCart,
-          fromTime: slotSearchStart,
+          fromTime: new Date(),
         })
       : [];
   const selectedSlot =
@@ -1010,8 +1006,9 @@ function SlotChoiceStep({
                 Créneau sélectionné
               </div>
               <div className="truncate text-lg font-black">
-                {selectedSlot.label} · {selectedSlot.pizza.already} + {selectedSlot.pizza.added} ={" "}
-                {selectedSlot.pizza.total} pizzas · {loadLabel(selectedSlot.level)}
+                {selectedSlot.label} · {selectedSlot.pizza.remaining} restante
+                {selectedSlot.pizza.remaining > 1 ? "s" : ""} · +{selectedSlot.pizza.added} ·{" "}
+                réserve +{selectedSlot.pizza.reserveAfterOrder} · {loadLabel(selectedSlot.level)}
               </div>
             </div>
             <Button className="h-12 shrink-0 px-6 text-base font-black" onClick={onContinue}>
@@ -1079,8 +1076,12 @@ function SlotOptionCard({
             )}
           </div>
           <p className="mt-2 text-base font-black">
-            {slot.pizza.already} + {slot.pizza.added} = {slot.pizza.total} pizza
-            {slot.pizza.total > 1 ? "s" : ""}
+            {slot.pizza.planned} prévue{slot.pizza.planned > 1 ? "s" : ""} · {slot.pizza.remaining}{" "}
+            reste{slot.pizza.remaining > 1 ? "nt" : ""}
+          </p>
+          <p className="mt-0.5 text-sm font-bold text-muted-foreground">
+            +{slot.pizza.added} commande · réserve +{slot.pizza.reserveAfterOrder} pizza
+            {slot.pizza.reserveAfterOrder > 1 ? "s" : ""}
           </p>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${tone.badge}`}>
@@ -1129,6 +1130,24 @@ function SlotOptionCard({
 
       {expanded && (
         <div className="mt-3 space-y-2 rounded-xl border bg-background p-2">
+          {slot.pizza.batches.length > 0 && (
+            <div className="rounded-lg border bg-card px-3 py-2 text-xs">
+              <div className="mb-1 font-black uppercase text-muted-foreground">
+                Fournées projetées
+              </div>
+              <div className="space-y-1">
+                {slot.pizza.batches.map((batch) => (
+                  <div key={batch.time.toISOString()} className="flex justify-between gap-2">
+                    <span className="font-bold">{batch.label}</span>
+                    <span className="text-muted-foreground">
+                      {batch.existingPizzas} déjà · +{batch.draftPizzas} · {batch.totalPizzas}/
+                      {batch.capacity}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {slot.existingOrders.length === 0 ? (
             <p className="py-2 text-center text-sm text-muted-foreground">
               Aucune commande déjà prévue.
@@ -1144,6 +1163,8 @@ function SlotOptionCard({
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {order.pizzaCount} pizza{order.pizzaCount > 1 ? "s" : ""}
+                  {order.remainingPizzaCount !== order.pizzaCount &&
+                    ` · ${order.remainingPizzaCount} restante${order.remainingPizzaCount > 1 ? "s" : ""}`}
                   {order.paninoCount > 0 && ` · ${order.paninoCount} Pani'NO`}
                   {order.fishCount > 0 && ` · ${order.fishCount} Fish & NO`}
                   {order.friesCount > 0 && ` · ${order.friesCount} frites`}
