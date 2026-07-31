@@ -65,7 +65,6 @@
   --color-status-delivered: var(--status-delivered);
 }
 
-
 :root {
   --radius: 0.875rem;
 
@@ -99,10 +98,10 @@
   --ring: oklch(0.72 0.18 50);
 
   /* Statuts commande */
-  --status-prepare: oklch(0.72 0.18 50);    /* orange */
-  --status-oven: oklch(0.65 0.2 30);        /* rouge-orangé */
-  --status-ready: oklch(0.7 0.17 155);      /* vert */
-  --status-delivered: oklch(0.6 0.02 250);  /* gris */
+  --status-prepare: oklch(0.72 0.18 50); /* orange */
+  --status-oven: oklch(0.65 0.2 30); /* rouge-orangé */
+  --status-ready: oklch(0.7 0.17 155); /* vert */
+  --status-delivered: oklch(0.6 0.02 250); /* gris */
 
   --chart-1: oklch(0.72 0.18 50);
   --chart-2: oklch(0.72 0.17 155);
@@ -119,7 +118,6 @@
   --sidebar-border: oklch(0.9 0.008 90);
   --sidebar-ring: oklch(0.72 0.18 50);
 }
-
 
 .dark {
   --background: oklch(0.129 0.042 264.695);
@@ -164,5 +162,15 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+
+  .kds-app-header {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  @supports (padding-top: constant(safe-area-inset-top)) {
+    .kds-app-header {
+      padding-top: constant(safe-area-inset-top);
+    }
   }
 }

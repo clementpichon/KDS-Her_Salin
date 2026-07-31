@@ -1,20 +1,63 @@
 {
+  "id": "/",
   "name": "Her Salin KDS",
   "short_name": "Her Salin",
   "description": "Système de production Her Salin pour caisse, pizzaiolo, four et Pani'NO.",
   "start_url": "/",
   "scope": "/",
-  "display": "fullscreen",
-  "display_override": ["fullscreen", "standalone"],
+  "display": "standalone",
   "orientation": "landscape",
   "background_color": "#faf9f5",
   "theme_color": "#f47f32",
+  "categories": ["food", "business", "productivity"],
   "icons": [
+    {
+      "src": "/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Caisse",
+      "short_name": "Caisse",
+      "description": "Ouvrir directement la prise de commande.",
+      "url": "/caisse",
+      "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Pizzaiolo",
+      "short_name": "Pizzaiolo",
+      "description": "Ouvrir directement le poste Pizzaiolo.",
+      "url": "/pizzaiolo",
+      "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Four",
+      "short_name": "Four",
+      "description": "Ouvrir directement le poste Four.",
+      "url": "/four",
+      "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Pani'NO",
+      "short_name": "Pani'NO",
+      "description": "Ouvrir directement le poste Pani'NO.",
+      "url": "/panino",
+      "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

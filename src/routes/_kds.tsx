@@ -14,13 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { KDS_AUTH_KEY, verifyKdsCredentials } from "@/lib/kds-auth";
 import { useSettings } from "@/hooks/use-kds-data";
 import type { SystemMode } from "@/lib/kds-types";
@@ -32,6 +26,10 @@ export const Route = createFileRoute("/_kds")({
 
 const FULLSCREEN_DISMISSED_KEY = "hersalin_fullscreen_dismissed_v1";
 const KDS_HEADER_COLLAPSED_KEY = "hersalin_header_collapsed_v1";
+
+function ignoreBrowserStorageError(error: unknown) {
+  void error;
+}
 
 type FullscreenDocument = Document & { webkitFullscreenElement?: Element | null };
 type FullscreenRoot = HTMLElement & {
@@ -67,9 +65,7 @@ function getFullscreenRequest() {
 function canUseKdsFullscreen() {
   if (typeof window === "undefined") return false;
 
-  const isTouchDevice =
-    window.matchMedia("(pointer: coarse)").matches ||
-    window.innerWidth <= 1024;
+  const isTouchDevice = window.matchMedia("(pointer: coarse)").matches || window.innerWidth <= 1024;
 
   return Boolean(getFullscreenRequest() && isTouchDevice && !isKdsStandalone());
 }
@@ -90,7 +86,9 @@ function KdsLayout() {
   useEffect(() => {
     try {
       setAuthed(localStorage.getItem(KDS_AUTH_KEY) === "1");
-    } catch {}
+    } catch (error) {
+      ignoreBrowserStorageError(error);
+    }
     setReady(true);
   }, []);
 
@@ -101,7 +99,11 @@ function KdsLayout() {
   }
 
   const logout = () => {
-    try { localStorage.removeItem(KDS_AUTH_KEY); } catch {}
+    try {
+      localStorage.removeItem(KDS_AUTH_KEY);
+    } catch (error) {
+      ignoreBrowserStorageError(error);
+    }
     setAuthed(false);
   };
 
@@ -117,7 +119,9 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
     try {
       const storedPreference = localStorage.getItem(KDS_HEADER_COLLAPSED_KEY);
       setHeaderCollapsed(storedPreference === null ? true : storedPreference === "1");
-    } catch {}
+    } catch (error) {
+      ignoreBrowserStorageError(error);
+    }
   }, []);
 
   const toggleHeaderCollapsed = () => {
@@ -125,7 +129,9 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
       const next = !current;
       try {
         localStorage.setItem(KDS_HEADER_COLLAPSED_KEY, next ? "1" : "0");
-      } catch {}
+      } catch (error) {
+        ignoreBrowserStorageError(error);
+      }
       return next;
     });
   };
@@ -133,8 +139,10 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
       <FullscreenPrompt />
-      <header className="sticky top-0 z-30 border-b bg-card shadow-sm">
-        <div className={`flex items-center gap-2 ${headerCollapsed ? "min-h-10 px-2 py-1" : "px-4 py-1"}`}>
+      <header className="kds-app-header sticky top-0 z-30 border-b bg-card shadow-sm">
+        <div
+          className={`flex items-center gap-2 ${headerCollapsed ? "min-h-10 px-2 py-1" : "px-4 py-1"}`}
+        >
           {headerCollapsed ? (
             <CollapsedHeader mode={mode} logout={logout} onExpand={toggleHeaderCollapsed} />
           ) : (
@@ -162,7 +170,11 @@ function AuthenticatedKdsLayout({ logout }: { logout: () => void }) {
   );
 }
 
-function KdsHeaderLogo({ className = "w-[8.5rem] sm:w-[9.5rem] lg:w-[10rem]" }: { className?: string }) {
+function KdsHeaderLogo({
+  className = "w-[8.5rem] sm:w-[9.5rem] lg:w-[10rem]",
+}: {
+  className?: string;
+}) {
   return (
     <img
       src={herSalinLogoUrl}
@@ -211,7 +223,9 @@ function SystemModeBadge({ mode }: { mode: SystemMode }) {
         : "border-primary/40 bg-primary/10 text-primary";
 
   return (
-    <span className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black tracking-wide sm:px-2.5 sm:text-[10px] ${className}`}>
+    <span
+      className={`inline-flex shrink-0 rounded-full border px-2 py-1 text-[9px] font-black tracking-wide sm:px-2.5 sm:text-[10px] ${className}`}
+    >
       {label}
     </span>
   );
@@ -229,14 +243,22 @@ function SystemModeMiniBadge({ mode }: { mode: SystemMode }) {
   return (
     <span
       className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-black tracking-wide ${className}`}
-      title={mode === "learning" ? "Mode apprentissage" : mode === "normal" ? "Mode normal" : "Mode test"}
+      title={
+        mode === "learning" ? "Mode apprentissage" : mode === "normal" ? "Mode normal" : "Mode test"
+      }
     >
       {label}
     </span>
   );
 }
 
-function HeaderCollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function HeaderCollapseButton({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   return (
     <button
       type="button"
@@ -311,7 +333,9 @@ function FullscreenPrompt() {
   const dismiss = () => {
     try {
       localStorage.setItem(FULLSCREEN_DISMISSED_KEY, "1");
-    } catch {}
+    } catch (error) {
+      ignoreBrowserStorageError(error);
+    }
     setVisible(false);
   };
 
@@ -326,7 +350,8 @@ function FullscreenPrompt() {
         <div className="min-w-0 flex-1">
           <div className="font-bold">Mode plein écran</div>
           <p className="text-xs text-muted-foreground">
-            Recommandé sur tablette et mobile pour éviter les barres du navigateur pendant le service.
+            Recommandé sur tablette et mobile pour éviter les barres du navigateur pendant le
+            service.
           </p>
           <div className="mt-3 flex gap-2">
             <button
@@ -356,8 +381,12 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (verifyKdsCredentials(user, pass)) {
-      requestKdsFullscreen().catch(() => {});
-      try { localStorage.setItem(KDS_AUTH_KEY, "1"); } catch {}
+      requestKdsFullscreen().catch(() => undefined);
+      try {
+        localStorage.setItem(KDS_AUTH_KEY, "1");
+      } catch (error) {
+        ignoreBrowserStorageError(error);
+      }
       setError("");
       onSuccess();
     } else {
@@ -367,7 +396,10 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-sm space-y-4">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-sm space-y-4"
+      >
         <div className="mb-2 flex flex-col items-center gap-2 text-center">
           <KdsHeaderLogo className="w-[15rem] sm:w-[16rem]" />
           <p className="text-xs font-medium text-muted-foreground">Accès restreint au KDS</p>
@@ -416,7 +448,10 @@ function NavLink({
     <Link
       to={to}
       className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-      activeProps={{ className: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground" }}
+      activeProps={{
+        className:
+          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+      }}
     >
       {icon}
       {children}
@@ -428,13 +463,27 @@ function DesktopNav({ logout }: { logout: () => void }) {
   return (
     <div className="hidden sm:flex items-center gap-2 flex-1">
       <nav className="flex flex-wrap items-center gap-1">
-        <NavLink to="/caisse" icon={<ShoppingCart className="h-4 w-4" />}>Caisse</NavLink>
-        <NavLink to="/assistant" icon={<BrainCircuit className="h-4 w-4" />}>Assistant</NavLink>
-        <NavLink to="/pizzaiolo" icon={<Pizza className="h-4 w-4" />}>Pizzaiolo</NavLink>
-        <NavLink to="/four" icon={<Flame className="h-4 w-4" />}>Four</NavLink>
-        <NavLink to="/panino" icon={<Sandwich className="h-4 w-4" />}>Pani'NO</NavLink>
-        <NavLink to="/pretes" icon={<PackageCheck className="h-4 w-4" />}>Prêtes</NavLink>
-        <NavLink to="/reglages" icon={<SettingsIcon className="h-4 w-4" />}>Réglages</NavLink>
+        <NavLink to="/caisse" icon={<ShoppingCart className="h-4 w-4" />}>
+          Caisse
+        </NavLink>
+        <NavLink to="/assistant" icon={<BrainCircuit className="h-4 w-4" />}>
+          Assistant
+        </NavLink>
+        <NavLink to="/pizzaiolo" icon={<Pizza className="h-4 w-4" />}>
+          Pizzaiolo
+        </NavLink>
+        <NavLink to="/four" icon={<Flame className="h-4 w-4" />}>
+          Four
+        </NavLink>
+        <NavLink to="/panino" icon={<Sandwich className="h-4 w-4" />}>
+          Pani'NO
+        </NavLink>
+        <NavLink to="/pretes" icon={<PackageCheck className="h-4 w-4" />}>
+          Prêtes
+        </NavLink>
+        <NavLink to="/reglages" icon={<SettingsIcon className="h-4 w-4" />}>
+          Réglages
+        </NavLink>
       </nav>
       <button
         onClick={logout}
@@ -468,16 +517,49 @@ function CompactNav({ logout }: { logout: () => void }) {
             <SheetTitle>Menu</SheetTitle>
           </SheetHeader>
           <nav className="flex flex-col gap-1 mt-6">
-            <MobileNavLink to="/caisse" icon={<ShoppingCart className="h-5 w-5" />} setOpen={setOpen}>Caisse</MobileNavLink>
-            <MobileNavLink to="/assistant" icon={<BrainCircuit className="h-5 w-5" />} setOpen={setOpen}>Assistant</MobileNavLink>
-            <MobileNavLink to="/pizzaiolo" icon={<Pizza className="h-5 w-5" />} setOpen={setOpen}>Pizzaiolo</MobileNavLink>
-            <MobileNavLink to="/four" icon={<Flame className="h-5 w-5" />} setOpen={setOpen}>Four</MobileNavLink>
-            <MobileNavLink to="/panino" icon={<Sandwich className="h-5 w-5" />} setOpen={setOpen}>Pani'NO</MobileNavLink>
-            <MobileNavLink to="/pretes" icon={<PackageCheck className="h-5 w-5" />} setOpen={setOpen}>Prêtes</MobileNavLink>
-            <MobileNavLink to="/reglages" icon={<SettingsIcon className="h-5 w-5" />} setOpen={setOpen}>Réglages</MobileNavLink>
+            <MobileNavLink
+              to="/caisse"
+              icon={<ShoppingCart className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Caisse
+            </MobileNavLink>
+            <MobileNavLink
+              to="/assistant"
+              icon={<BrainCircuit className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Assistant
+            </MobileNavLink>
+            <MobileNavLink to="/pizzaiolo" icon={<Pizza className="h-5 w-5" />} setOpen={setOpen}>
+              Pizzaiolo
+            </MobileNavLink>
+            <MobileNavLink to="/four" icon={<Flame className="h-5 w-5" />} setOpen={setOpen}>
+              Four
+            </MobileNavLink>
+            <MobileNavLink to="/panino" icon={<Sandwich className="h-5 w-5" />} setOpen={setOpen}>
+              Pani'NO
+            </MobileNavLink>
+            <MobileNavLink
+              to="/pretes"
+              icon={<PackageCheck className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Prêtes
+            </MobileNavLink>
+            <MobileNavLink
+              to="/reglages"
+              icon={<SettingsIcon className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Réglages
+            </MobileNavLink>
           </nav>
           <button
-            onClick={() => { setOpen(false); logout(); }}
+            onClick={() => {
+              setOpen(false);
+              logout();
+            }}
             className="mt-4 inline-flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <LogOut className="h-5 w-5" />
@@ -508,16 +590,49 @@ function MobileNav({ logout }: { logout: () => void }) {
             <SheetTitle>Menu</SheetTitle>
           </SheetHeader>
           <nav className="flex flex-col gap-1 mt-6">
-            <MobileNavLink to="/caisse" icon={<ShoppingCart className="h-5 w-5" />} setOpen={setOpen}>Caisse</MobileNavLink>
-            <MobileNavLink to="/assistant" icon={<BrainCircuit className="h-5 w-5" />} setOpen={setOpen}>Assistant</MobileNavLink>
-            <MobileNavLink to="/pizzaiolo" icon={<Pizza className="h-5 w-5" />} setOpen={setOpen}>Pizzaiolo</MobileNavLink>
-            <MobileNavLink to="/four" icon={<Flame className="h-5 w-5" />} setOpen={setOpen}>Four</MobileNavLink>
-            <MobileNavLink to="/panino" icon={<Sandwich className="h-5 w-5" />} setOpen={setOpen}>Pani'NO</MobileNavLink>
-            <MobileNavLink to="/pretes" icon={<PackageCheck className="h-5 w-5" />} setOpen={setOpen}>Prêtes</MobileNavLink>
-            <MobileNavLink to="/reglages" icon={<SettingsIcon className="h-5 w-5" />} setOpen={setOpen}>Réglages</MobileNavLink>
+            <MobileNavLink
+              to="/caisse"
+              icon={<ShoppingCart className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Caisse
+            </MobileNavLink>
+            <MobileNavLink
+              to="/assistant"
+              icon={<BrainCircuit className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Assistant
+            </MobileNavLink>
+            <MobileNavLink to="/pizzaiolo" icon={<Pizza className="h-5 w-5" />} setOpen={setOpen}>
+              Pizzaiolo
+            </MobileNavLink>
+            <MobileNavLink to="/four" icon={<Flame className="h-5 w-5" />} setOpen={setOpen}>
+              Four
+            </MobileNavLink>
+            <MobileNavLink to="/panino" icon={<Sandwich className="h-5 w-5" />} setOpen={setOpen}>
+              Pani'NO
+            </MobileNavLink>
+            <MobileNavLink
+              to="/pretes"
+              icon={<PackageCheck className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Prêtes
+            </MobileNavLink>
+            <MobileNavLink
+              to="/reglages"
+              icon={<SettingsIcon className="h-5 w-5" />}
+              setOpen={setOpen}
+            >
+              Réglages
+            </MobileNavLink>
           </nav>
           <button
-            onClick={() => { setOpen(false); logout(); }}
+            onClick={() => {
+              setOpen(false);
+              logout();
+            }}
             className="mt-4 inline-flex w-full items-center gap-3 rounded-md px-3 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
           >
             <LogOut className="h-5 w-5" />
@@ -545,7 +660,10 @@ function MobileNavLink({
       to={to}
       onClick={() => setOpen(false)}
       className="inline-flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-      activeProps={{ className: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground" }}
+      activeProps={{
+        className:
+          "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+      }}
     >
       {icon}
       {children}
