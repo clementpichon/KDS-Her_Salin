@@ -49,6 +49,7 @@ export interface CashierSlotOption {
   id: string;
   time: Date;
   label: string;
+  feasibilityScore: number;
   level: CashierLoadLevel;
   recommended: boolean;
   pizza: {
@@ -110,6 +111,9 @@ const PANINO_STATION_CAPACITY = 2;
 const FISH_FRYER_CAPACITY = 3;
 const FRIES_FRYER_CAPACITY = 6;
 const NEARBY_ORDER_WINDOW_MINUTES = 12;
+const FULL_BATCH_BONUS = 8;
+const PRESERVED_RESERVE_BONUS = 3;
+const CONSUMED_RESERVE_PENALTY = 5;
 export const MAX_PREPARATION_LEAD_MINUTES = 30;
 export const TARGET_SPONTANEOUS_CAPACITY_RESERVE = 4;
 
@@ -228,6 +232,7 @@ export function analyzeCashierSlot({
   cart,
   paninoCart,
   requestedTime,
+  fromTime,
 }: BuildSlotOptionsParams & { requestedTime: Date }): CashierSlotOption {
   const draft = summarizeCashierDraft(cart, paninoCart);
   const productionPlan = planProduction({
@@ -235,7 +240,7 @@ export function analyzeCashierSlot({
     draftOrder: { cart },
     existingOrders: orders,
     settings,
-    now: new Date(),
+    now: fromTime ?? new Date(),
   });
   const nearbyOrders = getNearbyActiveOrders(orders, requestedTime);
   const paninoByOrder = groupPaninoItemsByOrder(paninoItems);
@@ -281,13 +286,14 @@ export function analyzeCashierSlot({
     existingFish > 0 ||
     existingFries > 0 ||
     existingGrenailles > 0;
-  const level = resolveSlotLevel({
+  const feasibilityScore = computeFeasibilityScore({
     highestTotalRatio,
     highestExistingRatio,
     pizzaProjection: productionPlan,
     friesMixedLoad,
     hasExistingLoad,
   });
+  const level = resolveSlotLevel(feasibilityScore);
   const warnings = buildWarnings({
     level,
     pizzaAlready: productionPlan.existingPizzasInDraftBatches,
@@ -308,6 +314,7 @@ export function analyzeCashierSlot({
     id: requestedTime.toISOString(),
     time: requestedTime,
     label: formatTime(requestedTime),
+    feasibilityScore,
     level,
     recommended: false,
     pizza: {
@@ -816,7 +823,7 @@ function mergeExistingOrders(
   );
 }
 
-function resolveSlotLevel({
+function computeFeasibilityScore({
   highestTotalRatio,
   highestExistingRatio,
   pizzaProjection,
@@ -828,32 +835,82 @@ function resolveSlotLevel({
   pizzaProjection: ProductionPlanResult;
   friesMixedLoad: boolean;
   hasExistingLoad: boolean;
-}): CashierLoadLevel {
-  if (pizzaProjection.timingRisk) return "tendu";
+}) {
+  let score = 100;
+  const hasDraft = pizzaProjection.draftPizzas > 0;
+  const capacityOverage = Math.max(0, highestTotalRatio - 1);
+  const hasRealPressure =
+    pizzaProjection.timingRisk ||
+    capacityOverage > 0 ||
+    friesMixedLoad ||
+    highestExistingRatio >= 0.75;
+
+  if (highestTotalRatio <= 0) {
+    score -= 0;
+  } else if (highestTotalRatio <= 1) {
+    score -= Math.round(highestTotalRatio * 18);
+  } else {
+    score -= 18 + Math.round(Math.min(42, capacityOverage * 80));
+  }
+
+  if (hasExistingLoad && highestExistingRatio >= 0.75) {
+    score -= Math.round(Math.min(18, (highestExistingRatio - 0.75) * 72 + 8));
+  }
+
   if (
-    pizzaProjection.draftPizzas > 0 &&
-    pizzaProjection.reserveAfterDraft < TARGET_SPONTANEOUS_CAPACITY_RESERVE &&
+    hasDraft &&
+    pizzaProjection.remainingPizzasAtPickup > 0 &&
     !pizzaProjection.draftCompletesExistingBatch
   ) {
-    return "charge";
+    const pickupCompetitionRatio =
+      pizzaProjection.draftBatchCapacity > 0
+        ? pizzaProjection.remainingPizzasAtPickup / pizzaProjection.draftBatchCapacity
+        : 0;
+    score -= Math.round(Math.min(18, pickupCompetitionRatio * 16));
   }
 
-  if (!hasExistingLoad) {
-    if (friesMixedLoad) return "charge";
-    if (highestTotalRatio <= 0) return "calme";
-    if (highestTotalRatio <= 1) return "actif";
-    if (highestTotalRatio <= 1.5) return "charge";
-    return "tendu";
+  if (friesMixedLoad) {
+    score -= 24;
   }
 
-  if (pizzaProjection.draftCompletesExistingBatch && highestTotalRatio <= 1.15) return "actif";
-
-  if (friesMixedLoad || highestTotalRatio >= 1.2) return "tendu";
-  if (highestTotalRatio >= 1.05 || highestExistingRatio >= 0.75) {
-    return "charge";
+  if (
+    hasDraft &&
+    pizzaProjection.draftCompletesExistingBatch &&
+    !pizzaProjection.timingRisk &&
+    capacityOverage <= 0
+  ) {
+    score += FULL_BATCH_BONUS;
   }
-  if (highestTotalRatio >= 0.55) return "actif";
-  return "calme";
+
+  const scoreBeforeReserve = score;
+  if (hasDraft && pizzaProjection.reserveAfterDraft >= TARGET_SPONTANEOUS_CAPACITY_RESERVE) {
+    score += PRESERVED_RESERVE_BONUS;
+  } else if (hasDraft && pizzaProjection.reserveAfterDraft < TARGET_SPONTANEOUS_CAPACITY_RESERVE) {
+    score -= CONSUMED_RESERVE_PENALTY;
+    if (!hasRealPressure && scoreBeforeReserve >= 65) {
+      score = Math.max(65, score);
+    }
+  }
+
+  if (pizzaProjection.timingRisk) {
+    score = Math.min(score, 35);
+  } else if (capacityOverage > 0) {
+    score = Math.min(score, capacityOverage >= 0.5 ? 39 : 64);
+    if (capacityOverage < 0.5) score = Math.max(score, 40);
+  }
+
+  return clampFeasibilityScore(score);
+}
+
+function resolveSlotLevel(feasibilityScore: number): CashierLoadLevel {
+  if (feasibilityScore >= 85) return "calme";
+  if (feasibilityScore >= 65) return "actif";
+  if (feasibilityScore >= 40) return "charge";
+  return "tendu";
+}
+
+function clampFeasibilityScore(score: number) {
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 function isRecommendedSlot(option: CashierSlotOption) {
