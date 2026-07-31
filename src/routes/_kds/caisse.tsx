@@ -4,7 +4,6 @@ import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  CalendarClock,
   Plus,
   Minus,
   Trash2,
@@ -14,8 +13,6 @@ import {
   Pizza as PizzaIcon,
   Sandwich,
   Search,
-  ShoppingBasket,
-  UserRound,
 } from "lucide-react";
 import {
   usePizzas,
@@ -37,12 +34,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { CashierStationHeader } from "@/components/kds/CashierStationHeader";
 import { getPizzaImage } from "@/lib/pizza-images";
-import { computeStock, computePrepStart, formatTime, isLate } from "@/lib/scheduling";
+import { computeStock, computePrepStart, formatTime } from "@/lib/scheduling";
 import { friesLabel, paninoDisplayName } from "@/lib/kds-formatting";
 import { formatPhoneNumber, normalizePhoneNumber } from "@/lib/phone-utils";
-import { isOrderActive } from "@/lib/order-status";
 import {
   analyzeCashierSlot,
   buildCashierSlotOptions,
@@ -117,17 +112,8 @@ function Caisse() {
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [expandedSlotId, setExpandedSlotId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedSlotSeverityRef = useRef<{ id: string; severity: number } | null>(null);
   const runOcr = useServerFn(scanOrderTicket);
-
-  const paninoByOrder = useMemo(() => {
-    const map = new Map<string, (typeof paninoItems)[0][]>();
-    for (const item of paninoItems) {
-      const current = map.get(item.order_id) ?? [];
-      current.push(item);
-      map.set(item.order_id, current);
-    }
-    return map;
-  }, [paninoItems]);
 
   const stock = settings ? computeStock(orders, settings, paninoItems) : 0;
   const draftSummary = useMemo(() => summarizeCashierDraft(cart, paninoCart), [cart, paninoCart]);
@@ -278,20 +264,6 @@ function Caisse() {
       .sort((a, b) => a.localeCompare(b, "fr"));
   }, [allIngredientsList]);
 
-  const todayOrders = orders
-    .filter(isOrderActive)
-    .sort((a, b) => new Date(a.requested_time).getTime() - new Date(b.requested_time).getTime());
-  const readyOrders = todayOrders.filter((order) => {
-    const orderPaninos = paninoByOrder.get(order.id) ?? [];
-    const hasPizzas = (order.items?.length ?? 0) > 0;
-    const hasPaninos = orderPaninos.length > 0;
-    if (!hasPizzas && !hasPaninos) return false;
-    const pizzasReady = !hasPizzas || order.status === "ready";
-    const paninosDone = !hasPaninos || orderPaninos.every((item) => item.status === "done");
-    return pizzasReady && paninosDone;
-  });
-  const urgentCashierCount = todayOrders.filter((order) => isLate(order.requested_time)).length;
-
   const normalizedCatalogQuery = catalogQuery.trim().toLocaleLowerCase("fr");
   const disabledPaninoKeys = readDisabledPaninoKeys();
   const availablePaninoProducts = paninoProducts.filter(
@@ -341,19 +313,51 @@ function Caisse() {
     setFlowStep("slot");
   };
 
-  const chooseSlot = (slot: CashierSlotOption) => {
+  const selectSlot = (slot: CashierSlotOption) => {
     setRequestedTime(toLocalInput(slot.time));
     setSelectedSlotId(slot.id);
+  };
+
+  const selectedSlotEffectId = selectedSlot?.id ?? null;
+  const selectedSlotEffectLabel = selectedSlot?.label ?? "";
+  const selectedSlotEffectLevel = selectedSlot?.level ?? null;
+  const selectedSlotEffectPizzaTotal = selectedSlot?.pizza.total ?? 0;
+
+  const continueWithSelectedSlot = () => {
+    if (!selectedSlot) return toast.error("Choisissez un créneau");
     setFlowStep("client");
-    if (isSlotHighlyLoaded(slot)) {
-      toast.warning("Créneau choisi volontairement malgré une charge élevée.");
-    }
   };
 
   const changeDraft = (change: () => void) => {
     change();
     setSelectedSlotId(null);
   };
+
+  useEffect(() => {
+    if (
+      !selectedSlotEffectId ||
+      !selectedSlotEffectLevel ||
+      (flowStep !== "slot" && flowStep !== "client")
+    ) {
+      selectedSlotSeverityRef.current = null;
+      return;
+    }
+
+    const severity = slotSeverity(selectedSlotEffectLevel);
+    const previous = selectedSlotSeverityRef.current;
+    if (previous && previous.id === selectedSlotEffectId && severity > previous.severity) {
+      toast.warning(
+        `${selectedSlotEffectLabel} devient ${loadLabel(selectedSlotEffectLevel).toLowerCase()}.`,
+      );
+    }
+    selectedSlotSeverityRef.current = { id: selectedSlotEffectId, severity };
+  }, [
+    flowStep,
+    selectedSlotEffectId,
+    selectedSlotEffectLabel,
+    selectedSlotEffectLevel,
+    selectedSlotEffectPizzaTotal,
+  ]);
 
   const submit = async () => {
     if (submitting) return;
@@ -518,19 +522,12 @@ function Caisse() {
   };
 
   return (
-    <div className="space-y-3 p-3 lg:p-4">
-      <CashierStationHeader
-        active="caisse"
-        readyCount={readyOrders.length}
-        activeCount={todayOrders.length}
-        urgentCount={urgentCashierCount}
-      />
+    <div className="space-y-2 p-2 pb-20 lg:p-3">
       <h2 className="sr-only">Caisse — Prise de commande</h2>
       <CashierStepper step={flowStep} />
 
       {flowStep === "products" && (
         <ProductsStep
-          stock={stock}
           catalogTab={catalogTab}
           catalogQuery={catalogQuery}
           pizzas={filteredPizzas}
@@ -564,12 +561,12 @@ function Caisse() {
         <SlotChoiceStep
           summary={draftSummary}
           slotOptions={slotOptions}
+          selectedSlot={selectedSlot}
+          selectedSlotId={selectedSlotId}
           expandedSlotId={expandedSlotId}
-          onBack={() => {
-            setSelectedSlotId(null);
-            setFlowStep("products");
-          }}
-          onChoose={chooseSlot}
+          onBack={() => setFlowStep("products")}
+          onSelect={selectSlot}
+          onContinue={continueWithSelectedSlot}
           onToggleDetails={(slotId) =>
             setExpandedSlotId((current) => (current === slotId ? null : slotId))
           }
@@ -644,22 +641,20 @@ function CashierStepper({ step }: { step: CashierFlowStep }) {
   const currentIndex = steps.findIndex((item) => item.id === step);
 
   return (
-    <ol className="mx-auto grid max-w-5xl grid-cols-3 gap-2 rounded-2xl border bg-card p-2 shadow-sm">
+    <ol className="mx-auto flex max-w-lg items-center justify-center gap-2 rounded-full border bg-card/80 px-3 py-1.5 text-xs shadow-sm">
       {steps.map((item, index) => {
         const active = item.id === step;
         const done = index < currentIndex;
         return (
-          <li
-            key={item.id}
-            className={`rounded-xl px-3 py-2 text-center text-xs font-black uppercase tracking-wide transition sm:text-sm ${
-              active
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : done
-                  ? "bg-secondary/15 text-secondary"
-                  : "bg-muted/50 text-muted-foreground"
-            }`}
-          >
-            {index + 1}. {item.label}
+          <li key={item.id} className="flex items-center gap-2">
+            <span
+              className={`font-black ${
+                active ? "text-primary" : done ? "text-secondary" : "text-muted-foreground"
+              }`}
+            >
+              {done ? "✓" : active ? "●" : "○"} {item.label}
+            </span>
+            {index < steps.length - 1 && <span className="text-muted-foreground/40">/</span>}
           </li>
         );
       })}
@@ -668,7 +663,6 @@ function CashierStepper({ step }: { step: CashierFlowStep }) {
 }
 
 function ProductsStep({
-  stock,
   catalogTab,
   catalogQuery,
   pizzas,
@@ -688,7 +682,6 @@ function ProductsStep({
   onDuplicatePanino,
   onValidateProducts,
 }: {
-  stock: number;
   catalogTab: CashierCatalogTab;
   catalogQuery: string;
   pizzas: Pizza[];
@@ -712,31 +705,8 @@ function ProductsStep({
 
   return (
     <div className="grid gap-3 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] min-[900px]:items-start">
-      <section className="min-w-0 rounded-2xl border bg-card p-3 shadow-sm sm:p-4">
-        <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-black uppercase text-primary">
-              <ShoppingBasket className="h-4 w-4" />
-              Étape 1
-            </div>
-            <h1 className="mt-2 text-2xl font-black">Choix des produits</h1>
-            <p className="text-sm text-muted-foreground">
-              Ajoutez les produits, bases, suppléments et retraits avant de choisir le créneau.
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-background px-4 py-3 text-right">
-            <div className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">
-              Stock pâtons
-            </div>
-            <div
-              className={`text-3xl font-black ${stock < 20 ? "text-destructive" : "text-secondary"}`}
-            >
-              {stock}
-            </div>
-          </div>
-        </div>
-
-        <div className="sticky top-[3.55rem] z-20 mb-3 rounded-2xl border bg-background/95 p-2 shadow-sm backdrop-blur">
+      <section className="min-w-0 rounded-2xl border bg-card p-2 shadow-sm sm:p-3">
+        <div className="sticky top-[3.55rem] z-20 mb-2 rounded-2xl border bg-background/95 p-2 shadow-sm backdrop-blur">
           <div className="flex flex-col gap-2 min-[760px]:flex-row min-[760px]:items-center">
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1 min-[520px]:grid-cols-4 min-[760px]:w-auto">
               {[
@@ -902,14 +872,12 @@ function DraftBasketCard({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black">Panier</h2>
-          <p className="text-xs text-muted-foreground">Compact, modifiable, conservé au retour.</p>
+          <CompactDraftSummary summary={draftSummary} />
         </div>
         <span className="rounded-full bg-primary px-3 py-1 text-sm font-black text-primary-foreground">
           {draftSummary.totalProducts}
         </span>
       </div>
-
-      <DraftSummaryStrip summary={draftSummary} />
 
       {cartEmpty ? (
         <div className="mt-3 rounded-xl border border-dashed bg-muted/35 px-3 py-8 text-center">
@@ -956,7 +924,7 @@ function DraftBasketCard({
         className="mt-3 h-14 w-full text-base font-black"
         disabled={cartEmpty}
       >
-        Valider les produits
+        Continuer
       </Button>
     </aside>
   );
@@ -965,125 +933,197 @@ function DraftBasketCard({
 function SlotChoiceStep({
   summary,
   slotOptions,
+  selectedSlot,
+  selectedSlotId,
   expandedSlotId,
   onBack,
-  onChoose,
+  onSelect,
+  onContinue,
   onToggleDetails,
 }: {
   summary: ReturnType<typeof summarizeCashierDraft>;
   slotOptions: CashierSlotOption[];
+  selectedSlot: CashierSlotOption | null;
+  selectedSlotId: string | null;
   expandedSlotId: string | null;
   onBack: () => void;
-  onChoose: (slot: CashierSlotOption) => void;
+  onSelect: (slot: CashierSlotOption) => void;
+  onContinue: () => void;
   onToggleDetails: (slotId: string) => void;
 }) {
+  const recommendedSlots = slotOptions.filter((slot) => slot.recommended);
+  const otherSlots = slotOptions.filter((slot) => !slot.recommended);
+
   return (
-    <section className="mx-auto max-w-6xl space-y-3">
-      <StepHeader
-        icon={<CalendarClock className="h-5 w-5" />}
-        step="Étape 2"
-        title="Choisir le meilleur créneau"
-        description="Le KDS conseille avec la charge réelle, mais tous les créneaux restent sélectionnables."
-      />
-      <DraftSummaryStrip summary={summary} />
-      <div className="grid gap-3 lg:grid-cols-2">
-        {slotOptions.map((slot) => (
-          <SlotOptionCard
-            key={slot.id}
-            slot={slot}
-            expanded={expandedSlotId === slot.id}
-            onToggleDetails={() => onToggleDetails(slot.id)}
-            onChoose={() => onChoose(slot)}
-          />
-        ))}
+    <section className="mx-auto max-w-5xl space-y-2 pb-28">
+      <div className="flex items-center justify-between gap-2">
+        <Button variant="ghost" className="h-10 px-2" onClick={onBack}>
+          <ArrowLeft className="mr-1 h-4 w-4" />
+          Retour
+        </Button>
+        <CompactDraftSummary summary={summary} />
       </div>
+
+      {recommendedSlots.length > 0 && (
+        <SlotGroup title="Créneaux recommandés">
+          {recommendedSlots.map((slot) => (
+            <SlotOptionCard
+              key={slot.id}
+              slot={slot}
+              summary={summary}
+              selected={selectedSlotId === slot.id}
+              expanded={expandedSlotId === slot.id}
+              onSelect={() => onSelect(slot)}
+              onToggleDetails={() => onToggleDetails(slot.id)}
+            />
+          ))}
+        </SlotGroup>
+      )}
+
+      {otherSlots.length > 0 && (
+        <SlotGroup title={recommendedSlots.length > 0 ? "Autres créneaux" : "Créneaux"}>
+          {otherSlots.map((slot) => (
+            <SlotOptionCard
+              key={slot.id}
+              slot={slot}
+              summary={summary}
+              selected={selectedSlotId === slot.id}
+              expanded={expandedSlotId === slot.id}
+              onSelect={() => onSelect(slot)}
+              onToggleDetails={() => onToggleDetails(slot.id)}
+            />
+          ))}
+        </SlotGroup>
+      )}
+
       {slotOptions.length === 0 && (
         <div className="rounded-2xl border border-dashed bg-card px-4 py-10 text-center text-muted-foreground">
           Aucun créneau calculable pour le moment.
         </div>
       )}
-      <Button variant="outline" className="h-12 min-w-40" onClick={onBack}>
-        <ArrowLeft className="mr-2 h-4 w-4" />
-        Retour
-      </Button>
+
+      {selectedSlot && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 p-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur">
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-black uppercase text-muted-foreground">
+                Créneau sélectionné
+              </div>
+              <div className="truncate text-lg font-black">
+                {selectedSlot.label} · {selectedSlot.pizza.already} + {selectedSlot.pizza.added} ={" "}
+                {selectedSlot.pizza.total} pizzas · {loadLabel(selectedSlot.level)}
+              </div>
+            </div>
+            <Button className="h-12 shrink-0 px-6 text-base font-black" onClick={onContinue}>
+              Continuer →
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+function SlotGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <h1 className="px-1 text-lg font-black">{title}</h1>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{children}</div>
+    </div>
   );
 }
 
 function SlotOptionCard({
   slot,
+  summary,
+  selected,
   expanded,
   onToggleDetails,
-  onChoose,
+  onSelect,
 }: {
   slot: CashierSlotOption;
+  summary: ReturnType<typeof summarizeCashierDraft>;
+  selected: boolean;
   expanded: boolean;
   onToggleDetails: () => void;
-  onChoose: () => void;
+  onSelect: () => void;
 }) {
   const tone = loadTone(slot.level);
+  const showPanino = summary.paninoCount > 0;
+  const showFish = summary.fishCount > 0;
+  const showFries = summary.friesCount > 0 || summary.grenaillesCount > 0;
+
   return (
-    <article className={`rounded-2xl border p-3 shadow-sm ${tone.card}`}>
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      className={`cursor-pointer rounded-2xl border p-3 shadow-sm transition active:scale-[0.99] ${
+        selected ? "border-primary bg-primary/15 ring-2 ring-primary/25" : tone.card
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-3xl font-black">{slot.label}</div>
-            {slot.recommended && (
-              <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-black uppercase text-white">
-                Conseillé
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="text-3xl font-black leading-none">{slot.label}</div>
+            {selected && (
+              <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-black uppercase text-primary-foreground">
+                Sélectionné
               </span>
             )}
-            <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${tone.badge}`}>
-              {loadLabel(slot.level)}
-            </span>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Pizzas : {slot.pizza.already} déjà + {slot.pizza.added} panier ={" "}
-            <span className="font-black text-foreground">
-              {slot.pizza.total}/{slot.pizza.capacity}
-            </span>
+          <p className="mt-2 text-base font-black">
+            {slot.pizza.already} + {slot.pizza.added} = {slot.pizza.total} pizza
+            {slot.pizza.total > 1 ? "s" : ""}
           </p>
         </div>
-        <Button className="h-12 shrink-0 px-4 font-black" onClick={onChoose}>
-          {slot.level === "tendu" ? "Choisir quand même" : `Choisir ${slot.label}`}
-        </Button>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${tone.badge}`}>
+          {loadLabel(slot.level)}
+        </span>
       </div>
 
-      <div className="mt-3 grid gap-2 text-xs min-[520px]:grid-cols-3">
-        <LoadPill
-          label="Pani'NO"
-          value={`${slot.panino.already} + ${slot.panino.added} = ${slot.panino.total}`}
-          muted={slot.panino.added === 0 && slot.panino.already === 0}
-        />
-        <LoadPill
-          label="Fish & NO"
-          value={`${slot.fish.already} + ${slot.fish.added} = ${slot.fish.total}/${slot.fish.capacity}`}
-          muted={slot.fish.added === 0 && slot.fish.already === 0}
-        />
-        <LoadPill
-          label="Friteuse"
-          value={`${slot.fries.totalFries} frites · ${slot.fries.totalGrenailles} grenailles`}
-          muted={slot.fries.totalFries === 0 && slot.fries.totalGrenailles === 0}
-        />
-      </div>
-
-      {slot.warnings.length > 0 && (
-        <div className="mt-3 rounded-xl bg-background/75 p-2 text-sm font-semibold text-foreground">
-          {slot.warnings[0]}
+      {(showPanino || showFish || showFries) && (
+        <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+          {showPanino && (
+            <LoadPill
+              label="Pani'NO"
+              value={`${slot.panino.already} + ${slot.panino.added} = ${slot.panino.total}`}
+            />
+          )}
+          {showFish && (
+            <LoadPill
+              label="Fish"
+              value={`${slot.fish.already} + ${slot.fish.added} = ${slot.fish.total}`}
+            />
+          )}
+          {showFries && (
+            <LoadPill
+              label="Frites"
+              value={`${slot.fries.totalFries} frites · ${slot.fries.totalGrenailles} grenailles`}
+            />
+          )}
         </div>
       )}
 
       <div className="mt-3 flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={onToggleDetails}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleDetails();
+          }}
           className="rounded-full border bg-background px-3 py-2 text-xs font-black text-muted-foreground active:scale-[0.98]"
         >
-          {expanded ? "Masquer le détail" : "Voir les commandes prévues"}
+          {expanded ? "Masquer" : "Voir les commandes"}
         </button>
         <span className="text-xs text-muted-foreground">
-          {slot.existingOrders.length} commande{slot.existingOrders.length > 1 ? "s" : ""} dans la
-          zone
+          {slot.existingOrders.length} commande{slot.existingOrders.length > 1 ? "s" : ""}
         </span>
       </div>
 
@@ -1142,39 +1182,22 @@ function ClientStep({
   onSubmit: () => void;
 }) {
   return (
-    <section className="mx-auto max-w-4xl space-y-3">
-      <StepHeader
-        icon={<UserRound className="h-5 w-5" />}
-        step="Étape 3"
-        title="Informations client"
-        description="Dernière vérification : le créneau reste recalculé en temps réel jusqu'à la création."
-      />
-      <DraftSummaryStrip summary={summary} />
-      {selectedSlot && (
-        <div className={`rounded-2xl border p-3 shadow-sm ${loadTone(selectedSlot.level).card}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-xs font-black uppercase text-muted-foreground">
-                Créneau sélectionné
-              </div>
-              <div className="text-3xl font-black">{selectedSlot.label}</div>
-              <p className="text-sm text-muted-foreground">
-                Pizzas après validation : {selectedSlot.pizza.total}/{selectedSlot.pizza.capacity}
-              </p>
+    <section className="mx-auto max-w-3xl space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <Button variant="ghost" className="h-10 px-2" onClick={onBack}>
+          <ArrowLeft className="mr-1 h-4 w-4" />
+          Retour
+        </Button>
+        <div className="text-right">
+          <CompactDraftSummary summary={summary} />
+          {selectedSlot && (
+            <div className="text-xs font-bold text-muted-foreground">
+              {selectedSlot.label} · {selectedSlot.pizza.already} + {selectedSlot.pizza.added} ={" "}
+              {selectedSlot.pizza.total} pizzas
             </div>
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-black uppercase ${loadTone(selectedSlot.level).badge}`}
-            >
-              {loadLabel(selectedSlot.level)}
-            </span>
-          </div>
-          {selectedSlot.warnings.length > 0 && (
-            <p className="mt-2 rounded-xl bg-background/75 p-2 text-sm font-semibold">
-              {selectedSlot.warnings[0]}
-            </p>
           )}
         </div>
-      )}
+      </div>
 
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
         <div className="grid gap-3 sm:grid-cols-2">
@@ -1209,10 +1232,6 @@ function ClientStep({
 
         <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="h-12" onClick={onBack}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Retour
-            </Button>
             <Button variant="ghost" className="h-12" onClick={onChangeProducts}>
               Modifier les produits
             </Button>
@@ -1240,55 +1259,30 @@ function ClientStep({
   );
 }
 
-function StepHeader({
-  icon,
-  step,
-  title,
-  description,
-}: {
-  icon: ReactNode;
-  step: string;
-  title: string;
-  description: string;
-}) {
+function CompactDraftSummary({ summary }: { summary: ReturnType<typeof summarizeCashierDraft> }) {
+  const parts = [
+    summary.pizzaCount > 0
+      ? `${summary.pizzaCount} pizza${summary.pizzaCount > 1 ? "s" : ""}`
+      : null,
+    summary.paninoCount > 0 ? `${summary.paninoCount} Pani'NO` : null,
+    summary.fishCount > 0 ? `${summary.fishCount} Fish & NO` : null,
+    summary.friesCount + summary.grenaillesCount > 0
+      ? `${summary.friesCount + summary.grenaillesCount} frite${summary.friesCount + summary.grenaillesCount > 1 ? "s" : ""}`
+      : null,
+  ].filter(Boolean);
+
   return (
-    <div className="rounded-2xl border bg-card p-4 shadow-sm">
-      <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-black uppercase text-primary">
-        {icon}
-        {step}
-      </div>
-      <h1 className="mt-2 text-2xl font-black">{title}</h1>
-      <p className="text-sm text-muted-foreground">{description}</p>
+    <div className="text-sm font-black text-foreground">
+      {parts.length > 0 ? parts.join(" • ") : "Panier vide"}
     </div>
   );
 }
 
-function DraftSummaryStrip({ summary }: { summary: ReturnType<typeof summarizeCashierDraft> }) {
+function LoadPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-card p-2 shadow-sm sm:grid-cols-5">
-      <SummaryPill label="Produits" value={summary.totalProducts} />
-      <SummaryPill label="Pizzas" value={summary.pizzaCount} />
-      <SummaryPill label="Pani'NO" value={summary.paninoCount} />
-      <SummaryPill label="Fish & NO" value={summary.fishCount} />
-      <SummaryPill label="Pâtons" value={summary.doughCount} />
-    </div>
-  );
-}
-
-function SummaryPill({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl bg-muted/60 px-3 py-2 text-center">
-      <div className="text-[10px] font-black uppercase text-muted-foreground">{label}</div>
-      <div className="text-xl font-black">{value}</div>
-    </div>
-  );
-}
-
-function LoadPill({ label, value, muted }: { label: string; value: string; muted: boolean }) {
-  return (
-    <div className={`rounded-xl border bg-background px-3 py-2 ${muted ? "opacity-55" : ""}`}>
-      <div className="font-black uppercase text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-sm font-bold text-foreground">{value}</div>
+    <div className="rounded-full border bg-background px-2.5 py-1">
+      <span className="font-black uppercase text-muted-foreground">{label}</span>{" "}
+      <span className="font-bold text-foreground">{value}</span>
     </div>
   );
 }
@@ -1395,10 +1389,17 @@ function loadTone(level: CashierLoadLevel) {
 }
 
 function loadLabel(level: CashierLoadLevel) {
-  if (level === "tendu") return "Tendu";
-  if (level === "charge") return "Chargé";
-  if (level === "actif") return "Actif";
-  return "Calme";
+  if (level === "tendu") return "Très chargé";
+  if (level === "charge") return "Dense";
+  if (level === "actif") return "Fluide";
+  return "Disponible";
+}
+
+function slotSeverity(level: CashierLoadLevel) {
+  if (level === "tendu") return 3;
+  if (level === "charge") return 2;
+  if (level === "actif") return 1;
+  return 0;
 }
 
 function getPaninoCatalogTab(productKey: string): Exclude<CashierCatalogTab, "pizzas"> {

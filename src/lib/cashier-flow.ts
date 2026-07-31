@@ -119,11 +119,12 @@ export function buildCashierSlotOptions(params: BuildSlotOptionsParams): Cashier
     }),
   );
 
-  const recommended = options.find((option) => option.level !== "tendu") ?? options[0] ?? null;
+  const recommended = options.filter(isRecommendedSlot);
+  const others = options.filter((option) => !isRecommendedSlot(option));
 
-  return options.map((option) => ({
+  return [...recommended, ...others].map((option) => ({
     ...option,
-    recommended: Boolean(recommended && option.id === recommended.id),
+    recommended: isRecommendedSlot(option),
   }));
 }
 
@@ -156,18 +157,38 @@ export function analyzeCashierSlot({
   const totalFries = existingFries + draft.friesCount;
   const totalGrenailles = existingGrenailles + draft.grenaillesCount;
   const friesMixedLoad = totalFries > 0 && totalGrenailles > 0;
+  const pizzaWorkloadUnits = computeDraftPizzaWorkloadUnits(cart);
 
-  const ratios = [
+  const totalRatios = [
     pizzaCapacity.capacity > 0
-      ? (pizzaCapacity.overlappingPizzas + draft.pizzaCount) / pizzaCapacity.capacity
+      ? (pizzaCapacity.overlappingPizzas + pizzaWorkloadUnits) / pizzaCapacity.capacity
       : 0,
     totalPanino / PANINO_STATION_CAPACITY,
     totalFish / FISH_FRYER_CAPACITY,
     Math.max(totalFries, totalGrenailles) / FRIES_FRYER_CAPACITY,
     friesMixedLoad ? 1.2 : 0,
   ];
-  const highestRatio = Math.max(...ratios);
-  const level = resolveSlotLevel(highestRatio, pizzaCapacity.status, friesMixedLoad);
+  const existingRatios = [
+    pizzaCapacity.capacity > 0 ? pizzaCapacity.overlappingPizzas / pizzaCapacity.capacity : 0,
+    existingPanino / PANINO_STATION_CAPACITY,
+    existingFish / FISH_FRYER_CAPACITY,
+    Math.max(existingFries, existingGrenailles) / FRIES_FRYER_CAPACITY,
+  ];
+  const highestTotalRatio = Math.max(...totalRatios);
+  const highestExistingRatio = Math.max(...existingRatios);
+  const hasExistingLoad =
+    pizzaCapacity.overlappingPizzas > 0 ||
+    existingPanino > 0 ||
+    existingFish > 0 ||
+    existingFries > 0 ||
+    existingGrenailles > 0;
+  const level = resolveSlotLevel({
+    highestTotalRatio,
+    highestExistingRatio,
+    pizzaStatus: pizzaCapacity.status,
+    friesMixedLoad,
+    hasExistingLoad,
+  });
   const warnings = buildWarnings({
     level,
     pizzaAlready: pizzaCapacity.overlappingPizzas,
@@ -294,15 +315,51 @@ function mergeExistingOrders(
   );
 }
 
-function resolveSlotLevel(
-  highestRatio: number,
-  pizzaStatus: "idle" | "ok" | "warning" | "blocked",
-  friesMixedLoad: boolean,
-): CashierLoadLevel {
-  if (pizzaStatus === "blocked" || friesMixedLoad || highestRatio >= 1.15) return "tendu";
-  if (pizzaStatus === "warning" || highestRatio >= 0.9) return "charge";
-  if (highestRatio >= 0.55) return "actif";
+function resolveSlotLevel({
+  highestTotalRatio,
+  highestExistingRatio,
+  pizzaStatus,
+  friesMixedLoad,
+  hasExistingLoad,
+}: {
+  highestTotalRatio: number;
+  highestExistingRatio: number;
+  pizzaStatus: "idle" | "ok" | "warning" | "blocked";
+  friesMixedLoad: boolean;
+  hasExistingLoad: boolean;
+}): CashierLoadLevel {
+  if (!hasExistingLoad) {
+    if (friesMixedLoad) return "charge";
+    if (highestTotalRatio <= 0) return "calme";
+    if (highestTotalRatio <= 1) return "actif";
+    if (highestTotalRatio <= 1.5) return "charge";
+    return "tendu";
+  }
+
+  if (friesMixedLoad || pizzaStatus === "blocked" || highestTotalRatio >= 1.15) return "tendu";
+  if (pizzaStatus === "warning" || highestTotalRatio >= 0.9 || highestExistingRatio >= 0.75) {
+    return "charge";
+  }
+  if (highestTotalRatio >= 0.55) return "actif";
   return "calme";
+}
+
+function isRecommendedSlot(option: CashierSlotOption) {
+  return option.level === "calme" || option.level === "actif";
+}
+
+function computeDraftPizzaWorkloadUnits(cart: DraftItem[]) {
+  return cart.reduce((total, item) => total + computePizzaItemWorkload(item), 0);
+}
+
+function computePizzaItemWorkload(item: DraftItem) {
+  const name = item.pizza_name.toLocaleLowerCase("fr");
+  const postCookHints = ["saumon", "burrata", "parme", "roquette", "truffe"];
+  const postCookExtra = postCookHints.some((hint) => name.includes(hint)) ? 0.18 : 0;
+  const modifierExtra = Math.min(0.35, item.extras.length * 0.07 + item.removed.length * 0.04);
+  const baseExtra = item.base === "unknown" ? 0.1 : 0;
+  const cutExtra = item.cut_into ? 0.05 : 0;
+  return 1 + postCookExtra + modifierExtra + baseExtra + cutExtra;
 }
 
 function buildWarnings({
