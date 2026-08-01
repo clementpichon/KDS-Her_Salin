@@ -43,6 +43,7 @@ import {
   buildCashierSlotOptions,
   isSlotHighlyLoaded,
   summarizeCashierDraft,
+  TARGET_SPONTANEOUS_CAPACITY_RESERVE,
   type CashierCatalogTab,
   type CashierFlowStep,
   type CashierLoadLevel,
@@ -379,10 +380,7 @@ function Caisse() {
       requestedTime: reqDate,
     });
     if (isSlotHighlyLoaded(finalSlotCheck)) {
-      toast.warning(
-        finalSlotCheck.warnings[0] ??
-          "Créneau chargé : la commande reste créée car la décision appartient à la caisse.",
-      );
+      toast.warning(`${slotShortReason(finalSlotCheck)}. Commande créée si la caisse confirme.`);
     }
 
     setSubmitting(true);
@@ -949,6 +947,7 @@ function SlotChoiceStep({
 }) {
   const recommendedSlots = slotOptions.filter((slot) => slot.recommended);
   const otherSlots = slotOptions.filter((slot) => !slot.recommended);
+  const selectedSlotReason = selectedSlot ? slotShortReason(selectedSlot) : "";
 
   return (
     <section className="mx-auto max-w-5xl space-y-2 pb-28">
@@ -1006,9 +1005,7 @@ function SlotChoiceStep({
                 Créneau sélectionné
               </div>
               <div className="truncate text-lg font-black">
-                {selectedSlot.label} · {selectedSlot.pizza.remaining} restante
-                {selectedSlot.pizza.remaining > 1 ? "s" : ""} · +{selectedSlot.pizza.added} ·{" "}
-                réserve +{selectedSlot.pizza.reserveAfterOrder} · {loadLabel(selectedSlot.level)}
+                {selectedSlot.label} · {loadLabel(selectedSlot.level)} · {selectedSlotReason}
               </div>
             </div>
             <Button className="h-12 shrink-0 px-6 text-base font-black" onClick={onContinue}>
@@ -1046,9 +1043,13 @@ function SlotOptionCard({
   onSelect: () => void;
 }) {
   const tone = loadTone(slot.level);
-  const showPanino = summary.paninoCount > 0;
-  const showFish = summary.fishCount > 0;
-  const showFries = summary.friesCount > 0 || summary.grenaillesCount > 0;
+  const decision = loadLabel(slot.level);
+  const reason = slotShortReason(slot);
+  const cartImpact = slotCartImpact(summary);
+  const relevantOrders = slot.existingOrders.filter((order) => isOrderRelevantForSlot(order, slot));
+  const marginText = slotMarginText(slot);
+  const pickupPizzasAfterOrder = slot.pizza.planned + slot.pizza.added;
+  const pickupRemainingAfterOrder = slot.pizza.remaining + slot.pizza.added;
 
   return (
     <article
@@ -1075,42 +1076,15 @@ function SlotOptionCard({
               </span>
             )}
           </div>
-          <p className="mt-2 text-base font-black">
-            {slot.pizza.planned} prévue{slot.pizza.planned > 1 ? "s" : ""} · {slot.pizza.remaining}{" "}
-            reste{slot.pizza.remaining > 1 ? "nt" : ""}
-          </p>
-          <p className="mt-0.5 text-sm font-bold text-muted-foreground">
-            +{slot.pizza.added} commande · réserve +{slot.pizza.reserveAfterOrder} pizza
-            {slot.pizza.reserveAfterOrder > 1 ? "s" : ""}
-          </p>
+          <p className="mt-2 text-base font-black">{reason}</p>
+          {cartImpact && (
+            <p className="mt-0.5 text-sm font-bold text-muted-foreground">{cartImpact}</p>
+          )}
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${tone.badge}`}>
-          {loadLabel(slot.level)}
+          {decision}
         </span>
       </div>
-
-      {(showPanino || showFish || showFries) && (
-        <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
-          {showPanino && (
-            <LoadPill
-              label="Pani'NO"
-              value={`${slot.panino.already} + ${slot.panino.added} = ${slot.panino.total}`}
-            />
-          )}
-          {showFish && (
-            <LoadPill
-              label="Fish"
-              value={`${slot.fish.already} + ${slot.fish.added} = ${slot.fish.total}`}
-            />
-          )}
-          {showFries && (
-            <LoadPill
-              label="Frites"
-              value={`${slot.fries.totalFries} frites · ${slot.fries.totalGrenailles} grenailles`}
-            />
-          )}
-        </div>
-      )}
 
       <div className="mt-3 flex items-center justify-between gap-2">
         <button
@@ -1121,19 +1095,39 @@ function SlotOptionCard({
           }}
           className="rounded-full border bg-background px-3 py-2 text-xs font-black text-muted-foreground active:scale-[0.98]"
         >
-          {expanded ? "Masquer" : "Voir les commandes"}
+          {expanded ? "Masquer" : "Pourquoi ce conseil ?"}
         </button>
-        <span className="text-xs text-muted-foreground">
-          {slot.existingOrders.length} commande{slot.existingOrders.length > 1 ? "s" : ""}
-        </span>
       </div>
 
       {expanded && (
         <div className="mt-3 space-y-2 rounded-xl border bg-background p-2">
+          <div className="rounded-lg border bg-card px-3 py-2 text-xs">
+            <div className="mb-1 font-black uppercase text-muted-foreground">
+              Pourquoi ce conseil ?
+            </div>
+            <div className="space-y-1 text-muted-foreground">
+              {cartImpact && <DetailLine label="Panier ajouté" value={cartImpact} />}
+              <DetailLine label="Conseil" value={reason} />
+              {slot.pizza.added > 0 && (
+                <>
+                  <DetailLine
+                    label="À remettre à cette heure"
+                    value={`${pickupPizzasAfterOrder} pizza${pickupPizzasAfterOrder > 1 ? "s" : ""}`}
+                  />
+                  <DetailLine
+                    label="Encore à produire"
+                    value={`${pickupRemainingAfterOrder} pizza${pickupRemainingAfterOrder > 1 ? "s" : ""}`}
+                  />
+                </>
+              )}
+              {marginText && <DetailLine label="Marge cuisine" value={marginText} />}
+            </div>
+          </div>
+
           {slot.pizza.batches.length > 0 && (
             <div className="rounded-lg border bg-card px-3 py-2 text-xs">
               <div className="mb-1 font-black uppercase text-muted-foreground">
-                Fournées projetées
+                Fournées projetées pertinentes
               </div>
               <div className="space-y-1">
                 {slot.pizza.batches.map((batch) => (
@@ -1148,12 +1142,12 @@ function SlotOptionCard({
               </div>
             </div>
           )}
-          {slot.existingOrders.length === 0 ? (
+          {relevantOrders.length === 0 ? (
             <p className="py-2 text-center text-sm text-muted-foreground">
-              Aucune commande déjà prévue.
+              Aucune commande proche directement liée à ce créneau.
             </p>
           ) : (
-            slot.existingOrders.map((order) => (
+            relevantOrders.map((order) => (
               <div key={order.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-bold">{order.customerName}</span>
@@ -1213,8 +1207,8 @@ function ClientStep({
           <CompactDraftSummary summary={summary} />
           {selectedSlot && (
             <div className="text-xs font-bold text-muted-foreground">
-              {selectedSlot.label} · {selectedSlot.pizza.already} + {selectedSlot.pizza.added} ={" "}
-              {selectedSlot.pizza.total} pizzas
+              {selectedSlot.label} · {loadLabel(selectedSlot.level)} ·{" "}
+              {slotShortReason(selectedSlot)}
             </div>
           )}
         </div>
@@ -1299,13 +1293,99 @@ function CompactDraftSummary({ summary }: { summary: ReturnType<typeof summarize
   );
 }
 
-function LoadPill({ label, value }: { label: string; value: string }) {
+function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-full border bg-background px-2.5 py-1">
-      <span className="font-black uppercase text-muted-foreground">{label}</span>{" "}
-      <span className="font-bold text-foreground">{value}</span>
+    <div className="flex items-start justify-between gap-3">
+      <span className="font-semibold">{label}</span>
+      <span className="text-right font-bold text-foreground">{value}</span>
     </div>
   );
+}
+
+function slotCartImpact(summary: ReturnType<typeof summarizeCashierDraft>) {
+  const parts = [
+    summary.pizzaCount > 0
+      ? `+${summary.pizzaCount} pizza${summary.pizzaCount > 1 ? "s" : ""}`
+      : null,
+    summary.paninoCount > 0 ? `+${summary.paninoCount} Pani'NO` : null,
+    summary.fishCount > 0 ? `+${summary.fishCount} Fish & NO` : null,
+    summary.friesCount > 0
+      ? `+${summary.friesCount} portion${summary.friesCount > 1 ? "s" : ""} de frites`
+      : null,
+    summary.grenaillesCount > 0
+      ? `+${summary.grenaillesCount} portion${summary.grenaillesCount > 1 ? "s" : ""} de grenailles`
+      : null,
+  ].filter(Boolean);
+
+  return parts.join(" · ");
+}
+
+function slotShortReason(slot: CashierSlotOption) {
+  const warnings = normalizeForDecision(slot.warnings.join(" "));
+  const completesBatch = slotCompletesBatch(slot);
+  const highLoad = slot.level === "charge" || slot.level === "tendu";
+  const kitchenPressure =
+    warnings.includes("deja prevue") ||
+    warnings.includes("creneau dense") ||
+    warnings.includes("tres charge") ||
+    (highLoad && !slot.fries.mixedLoad);
+
+  if (warnings.includes("retard") || warnings.includes("fenetre")) return "Risque de retard";
+  if (kitchenPressure) return "Cuisine déjà chargée";
+  if (slot.fries.mixedLoad) return "Frites et grenailles à coordonner";
+  if (slotHasLowMargin(slot) && !completesBatch) return "Marge faible";
+  if (completesBatch) return "Complète bien une fournée";
+  if (slot.pizza.added > 0 && slot.pizza.reserveAfterOrder >= TARGET_SPONTANEOUS_CAPACITY_RESERVE) {
+    return "Encore de la marge";
+  }
+  if (slot.level === "calme") return "Créneau confortable";
+  return "Possible sans surcharge";
+}
+
+function slotMarginText(slot: CashierSlotOption) {
+  if (slot.pizza.added <= 0) return null;
+  if (slotCompletesBatch(slot)) return "Fournée bien remplie";
+  if (slot.pizza.reserveAfterOrder >= TARGET_SPONTANEOUS_CAPACITY_RESERVE) {
+    return "Marge confortable";
+  }
+  if (slot.pizza.reserveAfterOrder > 0) return "Marge limitée";
+  return "Marge faible";
+}
+
+function isOrderRelevantForSlot(
+  order: CashierSlotOption["existingOrders"][number],
+  slot: CashierSlotOption,
+) {
+  const orderTime = new Date(order.requestedTime);
+  if (Number.isNaN(orderTime.getTime())) return false;
+
+  const samePickupTime = formatTime(order.requestedTime) === slot.label;
+  const closeToSlot = Math.abs(orderTime.getTime() - slot.time.getTime()) <= 12 * 60 * 1000;
+  const hasLinkedSideLoad =
+    order.paninoCount > 0 ||
+    order.fishCount > 0 ||
+    order.friesCount > 0 ||
+    order.grenaillesCount > 0;
+
+  return samePickupTime || (closeToSlot && hasLinkedSideLoad);
+}
+
+function slotCompletesBatch(slot: CashierSlotOption) {
+  return slot.pizza.batches.some(
+    (batch) =>
+      batch.existingPizzas > 0 && batch.draftPizzas > 0 && batch.totalPizzas === batch.capacity,
+  );
+}
+
+function slotHasLowMargin(slot: CashierSlotOption) {
+  return slot.pizza.added > 0 && slot.pizza.reserveAfterOrder < TARGET_SPONTANEOUS_CAPACITY_RESERVE;
+}
+
+function normalizeForDecision(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("fr");
 }
 
 function QuantityControls({
@@ -1410,10 +1490,10 @@ function loadTone(level: CashierLoadLevel) {
 }
 
 function loadLabel(level: CashierLoadLevel) {
-  if (level === "tendu") return "Très chargé";
-  if (level === "charge") return "Dense";
-  if (level === "actif") return "Fluide";
-  return "Disponible";
+  if (level === "tendu") return "À éviter";
+  if (level === "charge") return "Possible";
+  if (level === "actif") return "Bon créneau";
+  return "À proposer";
 }
 
 function slotSeverity(level: CashierLoadLevel) {

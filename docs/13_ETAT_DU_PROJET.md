@@ -1339,7 +1339,7 @@ Audit du dépôt encore à effectuer.
 
 ## 2026-08-01 - Stabilisation du score Caisse
 
-Date : 2026-08-01  
+Date : 2026-08-01
 Branche : `refactor/cashier-slot-scoring`  
 Commit : 2530df7
 
@@ -1389,6 +1389,46 @@ Anomalies restantes :
 Prochaine étape :
 
 - Valider les recommandations Caisse sur quelques commandes réalistes, puis extraire progressivement les règles restantes du composant Caisse.
+
+---
+
+## 2026-08-01 - Simplification UX des tuiles de créneau Caisse
+
+Date : 2026-08-01
+Branche : `refactor/cashier-slot-scoring`
+
+Fichiers :
+
+- `src/routes/_kds/caisse.tsx`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- les tuiles de créneau exposaient des données techniques du moteur ;
+- la synthèse affichait `X prévues · Y restent` alors que le détail affichait les fournées projetées ;
+- la ligne `+X commande · réserve +Y pizzas` était ambiguë pour la caisse ;
+- les formules `0 + 1 = 1` étaient visibles dans les pastilles Pani'NO, Fish et frites.
+
+Statut après :
+
+- l'affichage principal de chaque tuile est orienté décision : heure, décision, raison courte et impact du panier ;
+- les libellés visibles côté Caisse deviennent `À proposer`, `Bon créneau`, `Possible`, `À éviter` ;
+- une seule raison courte est affichée sur la tuile ;
+- les données techniques `planned`, `remaining`, réserve chiffrée et ratios ne sont plus affichés sur la tuile principale ;
+- le détail est renommé `Pourquoi ce conseil ?` et conserve les explications utiles ;
+- les commandes du détail sont filtrées sur les commandes réellement liées au créneau ;
+- le moteur `src/lib/cashier-flow.ts`, le `feasibilityScore`, les seuils et les règles de recommandation n'ont pas été modifiés.
+
+Tests :
+
+- `npm test` : réussi ;
+- `npx eslint src/routes/_kds/caisse.tsx` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API.
+
+Risques restants :
+
+- aucune couverture automatisée d'interface n'existe encore pour figer la présentation des tuiles ;
+- les helpers de présentation restent dans `caisse.tsx` et pourront être extraits si d'autres écrans réutilisent ce vocabulaire.
 
 ---
 
@@ -1626,11 +1666,15 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
 - `analyzeCashierSlot()` expose désormais un `feasibilityScore` borné entre `0` et `100`.
 - Les libellés visuels existants sont dérivés du score final : `calme`, `actif`, `charge`, `tendu`.
 - La réserve ne compte plus comme charge et ne peut plus dégrader seule un créneau en `charge` ou `tendu`.
+- L'interface Caisse traduit ces niveaux internes en décisions lisibles : `À proposer`, `Bon créneau`, `Possible`, `À éviter`.
+- Les tuiles de créneau masquent les compteurs techniques du moteur et affichent une seule raison courte.
+- Le détail `Pourquoi ce conseil ?` conserve les explications utiles : panier ajouté, pizzas à remettre, pizzas encore à produire, fournées projetées et commandes liées.
 
 ### Ce qui est seulement partiel
 
 - Le mapping score -> libellé existe dans le moteur, mais il n'est pas encore configurable.
 - Le score reste interne au moteur et n'est pas encore affiché dans l'interface.
+- Les helpers de présentation des créneaux sont encore dans `src/routes/_kds/caisse.tsx`.
 - `src/lib/scheduling.ts` contient encore un moteur historique `computePizzaCapacity()` et `findNextPizzaCapacitySlots()` utilisé comme héritage.
 - `computePrepStart()` reste utilisé lors de la création de commande, alors que la documentation demande de mieux distinguer heure de remise et charge de production.
 
@@ -1649,12 +1693,13 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
   - alerte créneau chargé ;
   - insertion Supabase des commandes et items ;
   - logique de fallback si certaines colonnes Supabase ne sont pas encore migrées ;
-  - présentation des niveaux de charge.
+  - traduction des niveaux de charge en vocabulaire de décision pour la Caisse.
 
 ### Tests existants
 
 - `src/lib/cashier-flow.test.ts` couvre les créneaux midi/soir, les fournées complètes `1+3`, `3+1`, `7+1`, la réserve consommée seule, la capacité réellement dépassée, le retard réel, la commande prête, le créneau vide, le cas `4+1` et le mélange frites/grenailles.
 - `package.json` expose désormais `npm test` pour lancer ce test moteur.
+- Le lint ciblé `npx eslint src/routes/_kds/caisse.tsx` valide la présentation Caisse modifiée.
 
 ### Migrations Supabase présentes ou nécessaires
 
