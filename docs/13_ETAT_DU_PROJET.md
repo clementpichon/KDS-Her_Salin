@@ -1151,9 +1151,9 @@ Conformité actuelle : Document de pilotage
 | Chantier | État actuel | Risque | Priorité | Dépendances |
 |---|---|---|---|---|
 | Créneaux sur tout le service | Partiel | Moyen | Immédiate | Moteur Caisse |
-| Réserve ≠ charge | Incorrect ou partiel | Élevé | Immédiate | Score |
-| Score de faisabilité | Prototype ou absent | Moyen | Immédiate | Planification actuelle |
-| Charge résiduelle | Partielle | Élevé | Immédiate | États production |
+| Réserve ≠ charge | Implémenté et testé, validation terrain restante | Moyen | À valider | Score |
+| Score de faisabilité | Implémenté et testé | Moyen | À valider | Planification actuelle |
+| Charge résiduelle | Cas ready testé, couverture générale encore partielle | Élevé | Haute | États production |
 | Bases réelles | Partielle | Élevé | Haute | Migration Supabase |
 | Production Units | Absentes ou partielles | Élevé | Haute | Modèle de données |
 | Work Units | Absentes | Moyen | Haute après Production Units | Décomposition |
@@ -1341,7 +1341,7 @@ Audit du dépôt encore à effectuer.
 
 Date : 2026-08-01  
 Branche : `refactor/cashier-slot-scoring`  
-Commit : ce commit de branche
+Commit : 2530df7
 
 Fichiers :
 
@@ -1444,15 +1444,14 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
 
 ### Fonctionnalités partielles
 
-- Moteur Caisse : il existe un moteur dans `src/lib/cashier-flow.ts`, mais il ne respecte pas encore complètement la documentation. Il n'a pas de score interne `0..100`, mélange encore scoring et libellés, et utilise la réserve comme cause directe de dégradation de niveau dans certains cas.
+- Moteur Caisse : `src/lib/cashier-flow.ts` expose désormais un `feasibilityScore` interne borné `0..100`, dérive les libellés existants depuis ce score et empêche la réserve de devenir une charge. La validation terrain et l'extraction complète des règles hors composant restent à faire.
 - Moteur de décision : `src/lib/kds-brain.ts` calcule des charges par poste, mais ce n'est pas encore le moteur de décision central décrit dans `/docs`. Il n'est pas le point de vérité unique de la Caisse.
 - Modèle de production : `order_items.production_status`, `oven_batch_id`, `sent_to_oven_at` et `ready_at` permettent un suivi pizza par pizza, mais il n'existe pas encore de `ProductionUnit`, `WorkUnit`, `ProductionAllocation` ou `ProductionSlot`.
 - Journalisation : `production_events` et `phone_events` existent, mais il n'y a pas encore de clef d'idempotence métier ni de modèle d'événements rejouable sans ambiguïté.
-- Tests : un fichier de test métier existe, mais il n'est pas relié à un script `npm`/`bun` et ne couvre qu'une petite partie du moteur Caisse.
+- Tests : `npm test` couvre désormais les cas critiques du scoring Caisse, mais la couverture générale multi-postes reste partielle.
 
 ### Fonctionnalités absentes par rapport aux documents
 
-- Score de faisabilité numérique `0..100` exposé par le moteur Caisse.
 - Traduction configurable score -> libellés visuels.
 - Modèle cible `ProductionUnit` / `WorkUnit`.
 - Graphe explicite de dépendances entre unités de travail.
