@@ -1428,7 +1428,46 @@ Tests :
 Risques restants :
 
 - aucune couverture automatisée d'interface n'existe encore pour figer la présentation des tuiles ;
-- les helpers de présentation restent dans `caisse.tsx` et pourront être extraits si d'autres écrans réutilisent ce vocabulaire.
+- à ce stade, les helpers de présentation restent majoritairement dans `caisse.tsx`.
+
+---
+
+## 2026-08-01 - Correction des raisons de fournée Caisse
+
+Date : 2026-08-01
+Branche : `refactor/cashier-slot-scoring`
+
+Fichiers :
+
+- `src/routes/_kds/caisse.tsx`
+- `src/routes/_kds/-caisse-slot-presentation.ts`
+- `src/lib/cashier-flow.test.ts`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- la raison courte des tuiles Caisse reconnaissait seulement les fournées complétées avec des pizzas existantes ;
+- `0 déjà + 4 ajoutées = 4/4` pouvait afficher `Encore de la marge` au lieu d'une fournée complète ;
+- une tuile avec une fournée pleine et une fournée partielle pouvait afficher une raison trop optimiste.
+
+Statut après :
+
+- la raison courte est calculée par un helper de présentation ignoré par TanStack Router via le préfixe `-` ;
+- seules les fournées contenant des pizzas du panier sont classées pour la raison affichée ;
+- les cas `0+4`, `1+3`, `3+1`, `4+1`, `1+3 puis 1 résiduelle` et `7+1` sont distingués ;
+- `Fournée complète + fournée ouverte` est prioritaire lorsqu'une partie du panier complète une fournée mais qu'une autre ouvre une fournée partielle ;
+- le moteur `src/lib/cashier-flow.ts`, le `feasibilityScore`, les seuils et les règles de classement n'ont pas été modifiés.
+
+Tests :
+
+- `npm test` : réussi ;
+- `npx eslint src/routes/_kds/caisse.tsx src/routes/_kds/-caisse-slot-presentation.ts src/lib/cashier-flow.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API.
+
+Risques restants :
+
+- la présentation des tuiles n'est pas encore couverte par un test React/E2E ;
+- le détail `Marge cuisine` utilise encore une formulation séparée de la raison courte.
 
 ---
 
@@ -1668,13 +1707,14 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
 - La réserve ne compte plus comme charge et ne peut plus dégrader seule un créneau en `charge` ou `tendu`.
 - L'interface Caisse traduit ces niveaux internes en décisions lisibles : `À proposer`, `Bon créneau`, `Possible`, `À éviter`.
 - Les tuiles de créneau masquent les compteurs techniques du moteur et affichent une seule raison courte.
+- La raison courte distingue désormais les fournées pleines, les fournées partielles, les fournées complétées avec des pizzas existantes et les fournées pleines constituées par le panier seul.
 - Le détail `Pourquoi ce conseil ?` conserve les explications utiles : panier ajouté, pizzas à remettre, pizzas encore à produire, fournées projetées et commandes liées.
 
 ### Ce qui est seulement partiel
 
 - Le mapping score -> libellé existe dans le moteur, mais il n'est pas encore configurable.
 - Le score reste interne au moteur et n'est pas encore affiché dans l'interface.
-- Les helpers de présentation des créneaux sont encore dans `src/routes/_kds/caisse.tsx`.
+- Les helpers de présentation des raisons de créneau sont partiellement extraits dans `src/routes/_kds/-caisse-slot-presentation.ts`.
 - `src/lib/scheduling.ts` contient encore un moteur historique `computePizzaCapacity()` et `findNextPizzaCapacitySlots()` utilisé comme héritage.
 - `computePrepStart()` reste utilisé lors de la création de commande, alors que la documentation demande de mieux distinguer heure de remise et charge de production.
 
@@ -1697,9 +1737,9 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
 
 ### Tests existants
 
-- `src/lib/cashier-flow.test.ts` couvre les créneaux midi/soir, les fournées complètes `1+3`, `3+1`, `7+1`, la réserve consommée seule, la capacité réellement dépassée, le retard réel, la commande prête, le créneau vide, le cas `4+1` et le mélange frites/grenailles.
+- `src/lib/cashier-flow.test.ts` couvre les créneaux midi/soir, les fournées complètes `0+4`, `1+3`, `3+1`, `7+1`, le cas `4+1`, le cas `1+3 puis 1 résiduelle`, la réserve consommée seule, la capacité réellement dépassée, le retard réel, la commande prête, les items prêts, la commande remise, le créneau vide et le mélange frites/grenailles.
 - `package.json` expose désormais `npm test` pour lancer ce test moteur.
-- Le lint ciblé `npx eslint src/routes/_kds/caisse.tsx` valide la présentation Caisse modifiée.
+- Le lint ciblé `npx eslint src/routes/_kds/caisse.tsx src/routes/_kds/-caisse-slot-presentation.ts src/lib/cashier-flow.test.ts` valide la présentation Caisse modifiée.
 
 ### Migrations Supabase présentes ou nécessaires
 

@@ -59,6 +59,7 @@ import {
 } from "@/lib/pizza-production";
 import { scanOrderTicket } from "@/lib/api/ocr.functions";
 import { logProductionEvent } from "@/lib/production-events";
+import { slotShortReason } from "./-caisse-slot-presentation";
 import type {
   DraftItem,
   Pizza,
@@ -1320,28 +1321,6 @@ function slotCartImpact(summary: ReturnType<typeof summarizeCashierDraft>) {
   return parts.join(" · ");
 }
 
-function slotShortReason(slot: CashierSlotOption) {
-  const warnings = normalizeForDecision(slot.warnings.join(" "));
-  const completesBatch = slotCompletesBatch(slot);
-  const highLoad = slot.level === "charge" || slot.level === "tendu";
-  const kitchenPressure =
-    warnings.includes("deja prevue") ||
-    warnings.includes("creneau dense") ||
-    warnings.includes("tres charge") ||
-    (highLoad && !slot.fries.mixedLoad);
-
-  if (warnings.includes("retard") || warnings.includes("fenetre")) return "Risque de retard";
-  if (kitchenPressure) return "Cuisine déjà chargée";
-  if (slot.fries.mixedLoad) return "Frites et grenailles à coordonner";
-  if (slotHasLowMargin(slot) && !completesBatch) return "Marge faible";
-  if (completesBatch) return "Complète bien une fournée";
-  if (slot.pizza.added > 0 && slot.pizza.reserveAfterOrder >= TARGET_SPONTANEOUS_CAPACITY_RESERVE) {
-    return "Encore de la marge";
-  }
-  if (slot.level === "calme") return "Créneau confortable";
-  return "Possible sans surcharge";
-}
-
 function slotMarginText(slot: CashierSlotOption) {
   if (slot.pizza.added <= 0) return null;
   if (slotCompletesBatch(slot)) return "Fournée bien remplie";
@@ -1375,17 +1354,6 @@ function slotCompletesBatch(slot: CashierSlotOption) {
     (batch) =>
       batch.existingPizzas > 0 && batch.draftPizzas > 0 && batch.totalPizzas === batch.capacity,
   );
-}
-
-function slotHasLowMargin(slot: CashierSlotOption) {
-  return slot.pizza.added > 0 && slot.pizza.reserveAfterOrder < TARGET_SPONTANEOUS_CAPACITY_RESERVE;
-}
-
-function normalizeForDecision(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("fr");
 }
 
 function QuantityControls({
