@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-01 - audit factuel du dépôt  
+> Dernière mise à jour : 2026-08-02 - audit ProductionUnit / WorkUnit
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -20,6 +20,13 @@
 > - `10_SYNCHRONISATION.md`
 > - `11_TESTS_ACCEPTATION.md`
 > - `12_ROADMAP.md`
+> - `14_ARCHITECTURE_WORK_UNITS.md`
+> - `15_ARCHITECTURE_SCHEDULER.md`
+> - `16_ARCHITECTURE_PRODUCTION_PLAN.md`
+> - `17_ARCHITECTURE_RECIPES.md`
+> - `18_ARCHITECTURE_RESOURCES.md`
+> - `19_ARCHITECTURE_EVENTS.md`
+> - `20_ARCHITECTURE_LEARNING.md`
 
 ---
 
@@ -1171,44 +1178,53 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Stabilisation du moteur actuel de recommandation des créneaux Caisse.
+Création d'un adaptateur pur orders -> ProductionUnit[] en mémoire.
 ```
 
 ## Objectifs
 
-- auditer `cashier-flow.ts` ;
-- confirmer les créneaux sur tout le service ;
-- introduire ou fiabiliser le score ;
-- supprimer la réserve du calcul de charge ;
-- utiliser la charge résiduelle ;
-- conserver l’interface actuelle ;
-- ajouter les tests ;
-- exécuter lint et build.
+- définir un type métier minimal `ProductionUnit` ;
+- transformer les données actuelles `orders`, `order_items` et `panino_order_items` en unités physiques ;
+- conserver `orders`, `order_items` et `panino_order_items` comme source de vérité actuelle ;
+- ne modifier aucune table Supabase ;
+- ne modifier aucun poste ;
+- ne créer ni Scheduler, ni Dispatcher, ni ProductionPlan ;
+- rester déterministe et sans effet de bord ;
+- ajouter les tests unitaires de décomposition ;
+- préparer la future étape `WorkUnit` sans l'implémenter.
 
 ## Cas obligatoires
 
 ```text
-1 + 3 = 4 favorable
+une ligne pizza individuelle -> une ProductionUnit pizza
 ```
 
 ```text
-3 + 1 = 4 favorable
+plusieurs pizzas identiques -> plusieurs ProductionUnits distinctes
 ```
 
 ```text
-7 + 1 = 8 favorable
+commande mixte pizza / Pani'NO / Fish & NO / frites -> unités physiques séparées
 ```
 
 ```text
-4 + 1 = 5 moins favorable mais pas automatiquement impossible
+pizza ready ou in_oven -> statut ProductionUnit cohérent
 ```
 
 ```text
-commande prête = charge 0
+commande cancelled -> unités annulées ou exclues selon le contexte testé
 ```
 
 ```text
-réserve consommée ≠ classement très chargé
+ancienne commande sans tous les nouveaux champs -> compatibilité conservée
+```
+
+```text
+bases réelles, extras, retraits et identifiants d'origine conservés
+```
+
+```text
+aucune mutation des données d'entrée
 ```
 
 ---
@@ -1468,6 +1484,152 @@ Risques restants :
 
 - la présentation des tuiles n'est pas encore couverte par un test React/E2E ;
 - le détail `Marge cuisine` utilise encore une formulation séparée de la raison courte.
+
+---
+
+## 2026-08-02 - Audit architecture ProductionUnit / WorkUnit
+
+Date : 2026-08-02
+Branche : `refactor/production-work-units`
+
+Fichier modifié :
+
+- `docs/13_ETAT_DU_PROJET.md`
+
+Documents relus avant modification :
+
+- `docs/00_ARCHITECTURE_GLOBALE.md`
+- `docs/01_VISION_GENERALE.md`
+- `docs/02_MODELE_DE_DONNEES.md`
+- `docs/03_MOTEUR_PLANIFICATION.md`
+- `docs/04_MOTEUR_DECISION.md`
+- `docs/05_POSTE_CAISSE.md`
+- `docs/06_POSTE_PIZZAIOLO.md`
+- `docs/07_POSTE_FOUR.md`
+- `docs/08_POSTE_PANINO.md`
+- `docs/09_REGLES_METIER.md`
+- `docs/10_SYNCHRONISATION.md`
+- `docs/11_TESTS_ACCEPTATION.md`
+- `docs/12_ROADMAP.md`
+- `docs/13_ETAT_DU_PROJET.md`
+- `docs/14_ARCHITECTURE_WORK_UNITS.md`
+- `docs/15_ARCHITECTURE_SCHEDULER.md`
+- `docs/16_ARCHITECTURE_PRODUCTION_PLAN.md`
+- `docs/17_ARCHITECTURE_RECIPES.md`
+- `docs/18_ARCHITECTURE_RESOURCES.md`
+- `docs/19_ARCHITECTURE_EVENTS.md`
+- `docs/20_ARCHITECTURE_LEARNING.md`
+
+Constat principal :
+
+- le code actuel reste centré sur `orders`, `order_items` et `panino_order_items` ;
+- aucune entité `ProductionUnit`, `WorkUnit`, `ProductionPlan`, `Scheduler` ou `Dispatcher` n'est encore implémentée ;
+- plusieurs briques existantes peuvent servir d'adaptateurs de compatibilité ;
+- les documents 14 à 20 sont présents localement mais non suivis par Git au moment de l'audit ;
+- aucune migration Supabase ne doit être ajoutée avant validation d'un modèle en mémoire et d'un double calcul.
+
+Prochaine étape proposée :
+
+- créer un adaptateur pur `orders -> ProductionUnit[]` en mémoire, testé, sans modifier les postes ni Supabase.
+
+---
+
+## 2026-08-02 - Adaptateur ProductionUnit en mémoire
+
+Date : 2026-08-02
+Branche : `refactor/production-units-adapter`
+
+Fichiers :
+
+- `src/lib/production-units.ts`
+- `src/lib/production-units.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+- `docs/14_ARCHITECTURE_WORK_UNITS.md`
+- `docs/15_ARCHITECTURE_SCHEDULER.md`
+- `docs/16_ARCHITECTURE_PRODUCTION_PLAN.md`
+- `docs/17_ARCHITECTURE_RECIPES.md`
+- `docs/18_ARCHITECTURE_RESOURCES.md`
+- `docs/19_ARCHITECTURE_EVENTS.md`
+- `docs/20_ARCHITECTURE_LEARNING.md`
+
+Statut avant :
+
+- les documents 14 à 20 étaient présents localement mais non suivis par Git ;
+- la section `Prochaine tâche recommandée` restait centrée sur l'ancien chantier Caisse ;
+- aucun type métier `ProductionUnit` n'existait dans `src` ;
+- aucune décomposition pure `orders`, `order_items`, `panino_order_items` vers unités physiques n'était disponible.
+
+Statut après :
+
+- `docs/20_ARCHITECTURE_LEARNING.md` est considéré comme document officiel ;
+- les documents 14 à 20 sont ajoutés au suivi Git ;
+- `docs/13_ETAT_DU_PROJET.md` recommande désormais la création d'un adaptateur `orders -> ProductionUnit[]` ;
+- un type minimal `ProductionUnit` existe en mémoire, sans migration Supabase ;
+- les états globaux utilisés sont `created`, `in_progress`, `ready`, `delivered`, `failed`, `cancelled` ;
+- `in_oven` est converti en `in_progress` et conservé uniquement dans le détail pizza ;
+- `statusSource` trace l'origine de l'état calculé ;
+- `customerName` et `requestedTime` peuvent être `null` pour les anciennes données ;
+- les identifiants sont déterministes : `order_items:{id}` et `panino_order_items:{id}` ;
+- l'adaptateur ne modifie pas les données d'entrée ;
+- aucun poste, aucune table Supabase, aucun Scheduler, Dispatcher ou ProductionPlan n'a été modifié.
+
+Tests :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/production-units.ts src/lib/production-units.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API.
+
+Risques restants :
+
+- `ProductionUnit` est encore une projection en mémoire, pas une source de vérité ;
+- aucun poste ne consomme encore cette projection ;
+- les futures `WorkUnit` devront respecter strictement les priorités de statut validées ici.
+
+---
+
+## 2026-08-03 - Diagnostic ProductionUnit en lecture seule
+
+Date : 2026-08-03
+Branche : `refactor/production-units-adapter`
+
+Fichiers :
+
+- `src/lib/production-units-diagnostics.ts`
+- `src/lib/production-units-diagnostics.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- l'adaptateur `ProductionUnit` produisait une projection en mémoire ;
+- aucune fonction ne comparait encore les données source avec les unités générées ;
+- l'étape de diagnostic décrite dans la migration progressive restait à faire.
+
+Statut après :
+
+- un module pur `diagnoseProductionUnits()` produit un rapport structuré ;
+- le diagnostic ne modifie pas les données d'entrée ;
+- aucune table Supabase, aucun poste KDS, aucun statut existant et aucune interface n'a été modifié ;
+- les unités attendues sont générées par `buildProductionUnits()` puis comparées aux unités fournies, afin d'éviter toute duplication de la logique de résolution des statuts ;
+- le diagnostic compte les sources pizza, sources Pani'NO et unités produites ;
+- il regroupe les unités par type, état global et origine d'état ;
+- il détecte les commandes manquantes, identifiants d'unités dupliqués, sources dupliquées, produits inconnus, statuts incohérents, sources orphelines et quantités agrégées non supportées ;
+- il détecte les incohérences temporelles `ready_at` / `production_status` pour les pizzas et `done_at` / `status` pour les produits Pani'NO ;
+- l'hypothèse actuelle est conservée : chaque `order_items` représente une pizza physique unique et chaque `panino_order_items` représente un produit physique unique.
+
+Tests :
+
+- cas explicites ajoutés pour commandes annulées, commandes livrées, fallback `order ready`, compatibilité `prepared`, et anomalies temporelles pizza / Pani'NO ;
+- `npm test` : réussi ;
+- `npx eslint src/lib/production-units.ts src/lib/production-units.test.ts src/lib/production-units-diagnostics.ts src/lib/production-units-diagnostics.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API.
+
+Risques restants :
+
+- le diagnostic n'est pas encore branché sur un échantillon réel Supabase ;
+- il ne doit pas être exposé en production tant que son usage n'est pas défini ;
+- la prochaine étape `WorkUnit` doit rester en mémoire et testée avant toute migration.
 
 ---
 
@@ -2237,23 +2399,331 @@ Aucun fichier de code n'a été modifié pendant cette passe. Ce document est le
 
 ## 27.16 Prochaine étape technique recommandée
 
-Prochaine étape unique : valider le nouveau scoring Caisse en interface réelle, sans modifier les postes de production.
+Prochaine étape unique après validation terrain du scoring Caisse : introduire le modèle `ProductionUnit` en mémoire par adaptateur pur, sans modifier les postes de production.
 
 Objectif court :
 
-- créer quelques commandes de test couvrant `1+3`, `3+1`, `4+1`, `7+1`, retard, frites/grenailles ;
-- vérifier que la Caisse conseille sans bloquer ;
-- vérifier que les libellés restent lisibles pour la caissière ;
-- décider ensuite si le score doit rester interne ou être exposé discrètement dans l'interface.
+- conserver `orders`, `order_items` et `panino_order_items` comme source de vérité actuelle ;
+- créer une représentation `ProductionUnit` calculée en mémoire ;
+- vérifier que les counts et statuts calculés correspondent exactement au comportement actuel ;
+- ne changer aucune interface et aucune migration Supabase ;
+- préparer ensuite les `WorkUnit` sans créer de double source de vérité persistée.
 
 Branche proposée pour l'étape suivante :
 
 ```text
-test/cashier-slot-scoring-field-check
+refactor/production-units-adapter
 ```
 
-Fichiers probablement concernés si correction nécessaire :
+Fichiers probablement concernés :
 
-- `src/lib/cashier-flow.ts`
-- `src/lib/cashier-flow.test.ts`
+- `src/lib/kds-types.ts`
+- `src/lib/production-units.ts`
+- `src/lib/production-units.test.ts`
 - `docs/13_ETAT_DU_PROJET.md`
+
+---
+
+# 28. Audit cible ProductionUnit / WorkUnit - 2026-08-02
+
+## 28.1 Périmètre et méthode
+
+Documents relus pour cette passe :
+
+- documents actuels attendus : `docs/00_...` à `docs/13_...` ;
+- architecture cible : `docs/14_ARCHITECTURE_WORK_UNITS.md` à `docs/19_ARCHITECTURE_EVENTS.md` ;
+- document cible également présent localement : `docs/20_ARCHITECTURE_LEARNING.md`.
+
+État Git vérifiable au moment de l'audit :
+
+- branche locale : `refactor/production-work-units` ;
+- documents `docs/14_ARCHITECTURE_WORK_UNITS.md` à `docs/20_ARCHITECTURE_LEARNING.md` présents mais non suivis par Git ;
+- aucune migration Supabase ProductionUnit / WorkUnit présente ;
+- aucune entité `ProductionUnit`, `WorkUnit`, `ProductionPlan`, `Scheduler` ou `Dispatcher` trouvée dans `src`.
+
+Règle d'arbitrage retenue :
+
+- en cas d'écart entre les documents, `docs/09_REGLES_METIER.md` reste prioritaire ;
+- les documents 14 à 20 décrivent une cible et ne doivent pas déclencher une réécriture globale ;
+- l'Event Store complet et le Learning Engine sont explicitement hors périmètre immédiat.
+
+## 28.2 État réel du modèle actuel
+
+### Fichiers concernés
+
+- `src/lib/kds-types.ts`
+- `src/integrations/supabase/types.ts`
+- `src/hooks/use-kds-data.ts`
+- `supabase/migrations/*.sql`
+
+### Ce qui existe déjà
+
+- `Order` représente encore à la fois l'engagement commercial et une partie de l'état de production global.
+- `OrderItem` représente une pizza physique dans la pratique actuelle, avec :
+  - `production_status` ;
+  - `oven_batch_id` ;
+  - `sent_to_oven_at` ;
+  - `ready_at` ;
+  - `base`, `extras`, `removed`, `cut_into`.
+- `PaninoOrderItem` représente un produit Pani'NO / Fish & NO / cornet de frites avec statut propre.
+- `production_events` trace certaines actions, mais reste un journal d'événements simple.
+- `use-kds-data.ts` fournit déjà une couche commune de lecture Supabase et de synchronisation Realtime.
+
+### Ce qui est seulement partiel
+
+- Une ligne `OrderItem` se comporte déjà comme une future `ProductionUnit` pizza, mais le type ne l'exprime pas.
+- `PaninoOrderItem` se comporte aussi comme une future `ProductionUnit` pour certains produits, mais les dépendances pain / steak / poisson / frites restent implicites dans les composants.
+- `oven_batch_id` permet de grouper des pizzas envoyées au four, mais il n'existe pas de table ou type `Batch` complet.
+- Les statuts actuels ne couvrent pas le cycle cible `Pending -> Ready -> Reserved -> In Progress -> Completed`.
+
+### Ce qui est absent
+
+- Un identifiant stable de `ProductionUnit` indépendant du stockage Supabase.
+- Un type de produit physique commun entre pizza, Pani'NO, Fish & NO, frites et grenailles.
+- Un graphe de dépendances entre tâches.
+- Une projection unique `ProductionPlan` consommée par tous les postes.
+- Une comparaison automatisée ancien moteur / nouveau moteur.
+
+## 28.3 Services, modèles et composants réutilisables
+
+### Modèles réutilisables
+
+- `Order`, `OrderItem`, `PaninoOrderItem`, `Pizza`, `Settings` dans `src/lib/kds-types.ts` doivent rester la couche de compatibilité initiale.
+- Les colonnes `order_items.production_status`, `oven_batch_id`, `sent_to_oven_at`, `ready_at` sont utiles pour dériver les premiers états de `ProductionUnit`.
+- `orders.cancelled_at` et `orders.status = cancelled` doivent rester la base de suppression logique.
+
+### Services réutilisables
+
+- `src/lib/pizza-production.ts` :
+  - base réelle demandée ;
+  - snapshots de base ;
+  - statut pizza effectif ;
+  - détails d'affichage pizza.
+- `src/lib/cashier-flow.ts` :
+  - génération des créneaux de service ;
+  - scoring Caisse ;
+  - projection de fournées en mémoire ;
+  - règles déjà testées sur la réserve et les fournées.
+- `src/lib/pizzaiolo-queue.ts` :
+  - file Pizzaiolo legacy ;
+  - respect de `pizzaiolo_queue_position` ;
+  - regroupement des commandes mixtes avec besoin de pain Pani'NO.
+- `src/lib/pizzaiolo-batch-planner.ts` :
+  - proposition de fournée de 4 pizzas ;
+  - regroupement par base réelle ;
+  - base utile pour une future comparaison Scheduler.
+- `src/lib/scheduling.ts` :
+  - fonctions historiques de stock et capacité ;
+  - à conserver comme compatibilité, mais pas comme futur moteur canonique.
+- `src/lib/kds-brain.ts` :
+  - snapshot assistant et charge par poste ;
+  - utile pour comparer les charges, mais trop spécifique pour devenir le Scheduler cible.
+- `src/lib/production-events.ts` :
+  - journalisation actuelle exploitable ;
+  - à ne pas confondre avec l'Event Store cible.
+
+### Composants et routes à conserver
+
+- `src/routes/_kds/caisse.tsx` doit rester compatible avec `CashierSlotOption`.
+- `src/routes/_kds/pizzaiolo.tsx` doit rester piloté par les structures actuelles jusqu'à validation d'un adaptateur.
+- `src/routes/_kds/four.tsx` contient déjà une logique proche de la documentation : vision commande complète, pizzas grisées, validation commande complète.
+- `src/routes/_kds/panino.tsx` contient les règles opérationnelles Pani'NO / Fish & NO à extraire plus tard.
+- `src/routes/_kds/pretes.tsx` reste simple et doit être migré tardivement.
+
+## 28.4 Écarts et contradictions entre code et documentation
+
+### Écarts non bloquants
+
+- Les documents demandent que les interfaces affichent une décision issue du moteur. Le code contient encore des règles métier dans les routes.
+- Les documents 14 à 19 ciblent `ProductionUnit`, `WorkUnit`, `Scheduler`, `ProductionPlan`, `Resources` et `Events`. Le dépôt ne les implémente pas encore.
+- Le nom `ProductionPlanResult` existe dans `src/lib/cashier-flow.ts`, mais il ne correspond pas au `ProductionPlan` cible de `docs/16_ARCHITECTURE_PRODUCTION_PLAN.md`.
+- Les événements actuels sont persistés, mais ils ne sont pas encore immuables, idempotents et rejouables au sens de `docs/19_ARCHITECTURE_EVENTS.md`.
+- Les ressources physiques existent seulement sous forme de règles dispersées : four, pizzaiolo, friteuse poisson, friteuse frites, plan Pani'NO.
+
+### Contradictions fonctionnelles à surveiller
+
+- `docs/14_ARCHITECTURE_WORK_UNITS.md` indique que le KDS ne doit jamais piloter des commandes, alors que les routes actuelles pilotent encore largement des commandes. Ce n'est pas une erreur immédiate, mais une dette d'architecture.
+- `docs/16_ARCHITECTURE_PRODUCTION_PLAN.md` demande une vue publique unique du plan, alors que chaque poste reconstruit encore sa propre vision depuis Supabase.
+- `docs/19_ARCHITECTURE_EVENTS.md` place les événements comme seule manière de modifier l'état. Le code actuel modifie directement Supabase depuis les postes. Cette cible ne doit pas être appliquée brutalement.
+- `docs/09_REGLES_METIER.md` interdit de bloquer une action humaine pour une raison de recommandation. Toute future migration Scheduler devra conserver les actions manuelles existantes.
+
+### Ambiguïtés à clarifier avant implémentation métier
+
+- Les documents 14 à 19 sont demandés, mais `docs/20_ARCHITECTURE_LEARNING.md` est aussi présent localement. Il faut confirmer s'il devient document officiel au même titre que les autres.
+- Le mapping exact entre les statuts actuels (`to_prepare`, `in_oven`, `ready`, `delivered`, `cancelled`) et les statuts cible des `WorkUnit` doit être fixé avant écriture d'un Scheduler.
+- Le champ historique `OrderItem.prepared` existe encore. Il faut confirmer s'il doit être ignoré au profit de `production_status` ou conservé comme compatibilité.
+- Une `ProductionUnit` calculée doit avoir un identifiant déterministe. Proposition : `pizza:{order_item.id}` et `panino:{panino_order_item.id}`.
+- Le statut `orders.status = ready` peut rendre tous les items prêts même si certains `order_items.production_status` sont anciens. Cette règle de compatibilité doit être documentée dans l'adaptateur.
+
+## 28.5 Migration progressive recommandée vers ProductionUnit / WorkUnit
+
+### Étape 1 - ProductionUnit en mémoire
+
+Objectif :
+
+- créer un adaptateur pur qui transforme les commandes actuelles en `ProductionUnit[]`.
+
+Statut au 2026-08-02 :
+
+- implémenté dans `src/lib/production-units.ts` ;
+- testé dans `src/lib/production-units.test.ts` ;
+- non consommé par les postes ;
+- non persisté en base.
+
+Contraintes :
+
+- aucune migration Supabase ;
+- aucune route modifiée ;
+- aucun changement d'interface ;
+- aucune décision métier nouvelle.
+
+Fichiers probables :
+
+- `src/lib/kds-types.ts`
+- `src/lib/production-units.ts`
+- `src/lib/production-units.test.ts`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Validation :
+
+- `Regina x4` doit produire 4 unités pizza distinctes ;
+- une commande `ready` ou `delivered` doit produire des unités terminées ou exclues selon le contexte testé ;
+- une commande `cancelled` ne doit plus compter dans la charge active ;
+- les extras, retraits, base réelle et heure demandée doivent être conservés.
+
+### Étape 2 - WorkUnit en mémoire
+
+Objectif :
+
+- dériver des `WorkUnit[]` depuis les `ProductionUnit[]`, sans Scheduler.
+
+Contraintes :
+
+- statuts calculés depuis l'existant ;
+- dépendances simples uniquement ;
+- pas de table `work_units`.
+
+Fichiers probables :
+
+- `src/lib/work-units.ts`
+- `src/lib/work-units.test.ts`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Validation :
+
+- pizza : préparation puis cuisson puis finition éventuelle ;
+- Pani'NO : pain puis assemblage, avec préparation anticipable ;
+- Fish & NO : poisson, pommes/frites et assemblage ;
+- frites et grenailles ne doivent pas être considérées comme compatibles dans le même bain.
+
+### Étape 3 - Double calcul de diagnostic
+
+Objectif :
+
+- comparer les résultats legacy avec les unités calculées en mémoire.
+
+Statut au 2026-08-03 :
+
+- un premier diagnostic `ProductionUnit` en lecture seule existe dans `src/lib/production-units-diagnostics.ts` ;
+- il vérifie la cohérence source -> unités générées en utilisant `buildProductionUnits()` comme source de vérité ;
+- il détecte aussi les incohérences temporelles `ready_at` / `done_at` ;
+- il n'est pas intégré aux postes ni à l'interface de production ;
+- le double calcul par poste reste à faire avant toute migration d'écran.
+
+Contraintes :
+
+- comparaison en tests ou diagnostic interne uniquement ;
+- aucun poste ne consomme encore le nouveau modèle ;
+- aucune bascule utilisateur.
+
+Fichiers probables :
+
+- `src/lib/production-diagnostics.ts`
+- `src/lib/production-diagnostics.test.ts`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Validation :
+
+- même nombre de pizzas actives que `buildPizzaioloQueue()`;
+- mêmes exclusions que `cashier-flow`;
+- même stock pâtons attendu que `computeStock()`;
+- différences explicitement listées au lieu d'être masquées.
+
+### Étape 4 - Premier lecteur Pizzaiolo, sans changement visuel majeur
+
+Objectif :
+
+- migrer seulement la lecture du poste Pizzaiolo vers une projection issue des unités, après validation des diagnostics.
+
+Contraintes :
+
+- aucune suppression du moteur legacy ;
+- aucun changement de comportement manuel ;
+- le pizzaiolo peut toujours lancer, réorganiser et supprimer.
+
+Validation :
+
+- même file visible qu'avant migration ;
+- même comportement de fournée ;
+- l'ordre manuel reste prioritaire.
+
+### Étape 5 - Four puis Pani'NO puis Prêtes
+
+Ordre recommandé conforme à `docs/14_ARCHITECTURE_WORK_UNITS.md` :
+
+```text
+Pizzaiolo -> Four -> Pani'NO -> Prêtes
+```
+
+Chaque poste doit être migré seul, validé, puis seulement ensuite le poste suivant peut démarrer.
+
+### Étape 6 - Persistance future
+
+À ne commencer qu'après validation terrain :
+
+- tables `production_units` ;
+- tables `work_units` ;
+- batches persistants ;
+- événements idempotents ;
+- publication de `ProductionPlan`.
+
+Cette étape nécessite une migration Supabase et ne fait pas partie de la prochaine implémentation.
+
+## 28.6 Petites étapes testables proposées
+
+1. Créer uniquement les types `ProductionUnit` et l'adaptateur legacy.
+2. Tester l'adaptateur sur pizzas simples, pizzas multiples, commandes prêtes, livrées et annulées.
+3. Ajouter les produits Pani'NO / Fish & NO / frites dans le même adaptateur.
+4. Ajouter un rapport de diagnostic comparant les counts legacy et `ProductionUnit`.
+5. Créer seulement ensuite les `WorkUnit` calculées en mémoire.
+6. Ajouter des tests de dépendances WorkUnit sans modifier les postes.
+7. Comparer Pizzaiolo legacy et Pizzaiolo projeté avant toute bascule.
+8. Migrer un seul poste à la fois, en commençant par Pizzaiolo.
+
+## 28.7 Risques de régression
+
+- Créer trop tôt une persistance `ProductionUnit` produirait une double source de vérité.
+- Modifier les routes avant l'adaptateur rendrait impossible de comparer ancien et nouveau comportement.
+- Confondre `OrderItem` commercial et `ProductionUnit` physique casserait le cas `Regina x4`.
+- Interpréter les événements actuels comme un Event Store complet ferait croire à une garantie d'idempotence inexistante.
+- Introduire `Scheduler` avant `WorkUnit` imposerait une architecture trop abstraite et difficile à tester.
+
+## 28.8 Parties à conserver absolument
+
+- Le moteur Caisse actuel et ses tests pendant la phase d'adaptateur.
+- Les actions manuelles Pizzaiolo existantes.
+- La vision commande complète du Four.
+- La logique Pani'NO permettant du temps masqué.
+- La suppression logique `cancelled`.
+- Le reset stock pâtons basé sur `paton_stock_reset_at`.
+- Le service worker prudent qui ne cache pas les données KDS.
+
+## 28.9 Prochaine branche recommandée
+
+```text
+refactor/production-units-adapter
+```
+
+Objectif unique :
+
+- produire une représentation `ProductionUnit[]` en mémoire, testée, sans migration, sans écran modifié, sans Scheduler.
