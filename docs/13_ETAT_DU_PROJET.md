@@ -566,15 +566,16 @@ Le modèle cible prévoit une Production Unit par produit physique.
 ### État probable
 
 ```text
-Statut : Absent ou partiel
+Statut : Implémenté et testé en mémoire
 ```
 
-### À auditer
+### État actuel vérifié
 
-- les pizzas disposent-elles d’identifiants individuels ?
-- une ligne `Regina × 4` peut-elle suivre quatre états distincts ?
-- les commandes multi-fournées sont-elles représentées sans duplication ?
-- les produits à refaire disposent-ils d’une nouvelle unité ?
+- `src/lib/production-units.ts` définit le type métier minimal `ProductionUnit` ;
+- `buildProductionUnits()` projette `orders`, `order_items` et `panino_order_items` en unités physiques ;
+- les identifiants source sont conservés ;
+- les états globaux sont résolus sans modifier la base Supabase ;
+- `src/lib/production-units.test.ts` couvre la décomposition et les compatibilités legacy.
 
 ---
 
@@ -583,20 +584,20 @@ Statut : Absent ou partiel
 ### État probable
 
 ```text
-Statut : Absent comme modèle unifié
+Statut : Projection minimale implémentée et testée en mémoire
 ```
 
-Certaines actions ou états existants peuvent déjà représenter implicitement des Work Units :
+État actuel vérifié :
 
-- préparation pizza ;
-- envoi au Four ;
-- cuisson ;
-- post-cuisson ;
-- préparation Pani’NO.
+- `src/lib/work-units.ts` définit le type métier minimal `WorkUnit` ;
+- `buildWorkUnits()` projette des `ProductionUnit[]` en tâches élémentaires déterministes ;
+- les dépendances entre tâches sont explicites via `dependsOn` ;
+- la projection reste en lecture seule et ne modifie aucun poste ;
+- `src/lib/work-units.test.ts` couvre les workflows pizza, Pani'NO, Fish & NO, frites, grenailles et les statuts globaux.
 
-### Objectif de l’audit
+### Objectif restant
 
-Identifier les structures existantes pouvant être réutilisées avant d’introduire une nouvelle table ou un nouveau type.
+Valider la projection sur des données réelles avant d’introduire une persistance ou une consommation par les postes.
 
 ---
 
@@ -954,8 +955,8 @@ Créer un tableau d’audit.
 | Migration | Présente dans le dépôt | Appliquée en développement | Appliquée en production | Réversible | Notes |
 |---|---:|---:|---:|---:|---|
 | Ajout `order_items.base` | À vérifier | À vérifier | À vérifier | À vérifier | Branche `refactor-pizza-real-base` |
-| Production Units | Non | Non | Non | — | Phase future |
-| Work Units | Non | Non | Non | — | Phase future |
+| Production Units | Sans migration | Sans objet | Sans objet | — | Implémentées et testées en mémoire |
+| Work Units | Sans migration | Sans objet | Sans objet | — | Projection minimale implémentée et testée en mémoire |
 | Version des entités | À vérifier | À vérifier | À vérifier | À vérifier | Synchronisation |
 | Clés d’idempotence | À vérifier | À vérifier | À vérifier | À vérifier | Actions critiques |
 
@@ -1162,8 +1163,8 @@ Conformité actuelle : Document de pilotage
 | Score de faisabilité | Implémenté et testé | Moyen | À valider | Planification actuelle |
 | Charge résiduelle | Cas ready testé, couverture générale encore partielle | Élevé | Haute | États production |
 | Bases réelles | Partielle | Élevé | Haute | Migration Supabase |
-| Production Units | Absentes ou partielles | Élevé | Haute | Modèle de données |
-| Work Units | Absentes | Moyen | Haute après Production Units | Décomposition |
+| Production Units | Implémentées et testées en mémoire | Moyen | À valider | Modèle de données |
+| Work Units | Projection minimale implémentée et testée en mémoire | Moyen | À valider | Diagnostic |
 | Quatre disques | À développer | Moyen | Haute | Production Units |
 | Commande complète au Four | Partielle | Élevé | Haute | États individuels |
 | OF Pain | À vérifier | Élevé | Haute | Work Units |
@@ -1178,49 +1179,52 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Création d'un adaptateur pur orders -> ProductionUnit[] en mémoire.
+Diagnostic des Work Units.
 ```
 
 ## Objectifs
 
-- définir un type métier minimal `ProductionUnit` ;
-- transformer les données actuelles `orders`, `order_items` et `panino_order_items` en unités physiques ;
-- conserver `orders`, `order_items` et `panino_order_items` comme source de vérité actuelle ;
+- comparer les `ProductionUnit[]` aux `WorkUnit[]` générées en mémoire ;
+- vérifier que chaque unité physique supportée produit le workflow attendu ;
+- détecter les unités sans workflow, notamment `other` ;
+- détecter les dépendances manquantes ou incohérentes ;
+- détecter les statuts projetés suspects sans corriger les données ;
+- conserver `ProductionUnit` et `WorkUnit` comme projections en lecture seule ;
 - ne modifier aucune table Supabase ;
 - ne modifier aucun poste ;
 - ne créer ni Scheduler, ni Dispatcher, ni ProductionPlan ;
 - rester déterministe et sans effet de bord ;
-- ajouter les tests unitaires de décomposition ;
-- préparer la future étape `WorkUnit` sans l'implémenter.
+- ajouter les tests unitaires du diagnostic ;
+- préparer la validation terrain avant toute intégration dans les postes.
 
 ## Cas obligatoires
 
 ```text
-une ligne pizza individuelle -> une ProductionUnit pizza
+ProductionUnit pizza avec et sans post-cuisson -> workflow WorkUnit attendu
 ```
 
 ```text
-plusieurs pizzas identiques -> plusieurs ProductionUnits distinctes
+ProductionUnit Pani'NO -> pain et garniture parallèles, puis assemblage
 ```
 
 ```text
-commande mixte pizza / Pani'NO / Fish & NO / frites -> unités physiques séparées
+ProductionUnit Fish & NO -> poisson et accompagnement parallèles, puis assemblage
 ```
 
 ```text
-pizza ready ou in_oven -> statut ProductionUnit cohérent
+ProductionUnit frites ou grenailles -> cuisson puis packaging
 ```
 
 ```text
-commande cancelled -> unités annulées ou exclues selon le contexte testé
+ProductionUnit other -> absence de workflow signalée
 ```
 
 ```text
-ancienne commande sans tous les nouveaux champs -> compatibilité conservée
+statuts cancelled, failed, ready et delivered -> cohérence globale des Work Units
 ```
 
 ```text
-bases réelles, extras, retraits et identifiants d'origine conservés
+dépendances WorkUnit -> toutes résolues vers une WorkUnit existante
 ```
 
 ```text
@@ -1630,6 +1634,97 @@ Risques restants :
 - le diagnostic n'est pas encore branché sur un échantillon réel Supabase ;
 - il ne doit pas être exposé en production tant que son usage n'est pas défini ;
 - la prochaine étape `WorkUnit` doit rester en mémoire et testée avant toute migration.
+
+---
+
+## 2026-08-03 - Décomposition WorkUnit en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/work-units-decomposition`
+
+Fichiers :
+
+- `src/lib/work-units.ts`
+- `src/lib/work-units.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- `ProductionUnit` existait comme projection pure en mémoire ;
+- aucun type `WorkUnit` n'existait dans `src` ;
+- aucune décomposition `ProductionUnit -> WorkUnit[]` n'était disponible ;
+- aucun poste KDS ne consommait encore le modèle cible.
+
+Statut après :
+
+- un type minimal `WorkUnit` existe en mémoire ;
+- les états `WorkUnit` utilisés sont `blocked`, `available`, `reserved`, `in_progress`, `completed`, `failed`, `cancelled` ;
+- `buildWorkUnits()` transforme des `ProductionUnit[]` en tâches élémentaires déterministes ;
+- les identifiants sont déterministes : `work_unit:{productionUnit.id}:{workflowNodeId}` ;
+- les dépendances sont explicites via `dependsOn` ;
+- aucune table Supabase, aucun poste KDS, aucun Scheduler, Dispatcher ou ProductionPlan n'a été modifié ;
+- la projection ne modifie pas les données d'entrée.
+
+Mapping réellement implémenté :
+
+- pizza sans post-cuisson : `pizza.preparation` au Pizzaiolo, puis `pizza.cooking` au Four, puis `pizza.packaging` au Four ;
+- pizza avec post-cuisson : `pizza.preparation` au Pizzaiolo, puis `pizza.cooking` au Four, puis `pizza.finishing` au Four, puis `pizza.packaging` au Four ;
+- Pani'NO : `panino.bread` au Pizzaiolo et `panino.filling` au poste Pani'NO peuvent avancer en parallèle, puis `panino.assembly`, puis `panino.packaging` ;
+- Fish & NO : `fish_no.fish_cooking` et `fish_no.side_cooking` peuvent avancer en parallèle, puis `fish_no.assembly`, puis `fish_no.packaging` ;
+- frites : `fries.cooking`, puis `fries.packaging` ;
+- grenailles : `grenailles.cooking`, puis `grenailles.packaging` ;
+- produit inconnu : aucune `WorkUnit` générée à cette étape.
+
+Mapping d'état :
+
+- `ProductionUnit.cancelled` -> toutes les Work Units `cancelled` ;
+- `ProductionUnit.failed` -> toutes les Work Units `failed` ;
+- `ProductionUnit.ready` ou `delivered` -> toutes les Work Units `completed` ;
+- `ProductionUnit.created` -> tâches sans dépendance `available`, tâches dépendantes `blocked` ;
+- pizza `in_progress` -> préparation `completed`, cuisson `in_progress`, suite du workflow `blocked` ;
+- pizza legacy `prepared` -> préparation `completed`, cuisson `available`, suite du workflow `blocked` ;
+- Pani'NO `in_progress` -> pain `available`, garniture/steak `in_progress`, assemblage et packaging `blocked` ;
+- Fish & NO `in_progress` -> poisson `available`, accompagnement `available`, assemblage et packaging `blocked` ;
+- frites ou grenailles `in_progress` -> cuisson `in_progress`, packaging `blocked`.
+
+Tests :
+
+- pizza créée, en cuisson, prête et compatibilité legacy `prepared` ;
+- commande annulée avec pizza et Pani'NO ;
+- Pani'NO avec pain et garniture parallèles ;
+- Pani'NO en cours ;
+- Fish & NO avec poisson et accompagnement parallèles ;
+- Fish & NO en cours ;
+- frites et grenailles ;
+- produit inconnu sans workflow ;
+- `ProductionUnit.delivered` -> toutes les Work Units `completed` ;
+- `ProductionUnit.failed` -> toutes les Work Units `failed` ;
+- identifiants et dépendances déterministes ;
+- même entrée -> même sortie ;
+- toutes les dépendances pointent vers une Work Unit existante ;
+- absence de mutation des `ProductionUnit[]`.
+
+Limitations documentées :
+
+- `ProductionUnit` ne contient pas encore `orders.pains_panino_status`, donc l'état réel du pain Pani'NO reste projeté de manière prudente ;
+- `PaninoOrderItem.status` reste trop global pour savoir quelle sous-tâche Pani'NO ou Fish & NO est réellement commencée ;
+- les suppléments post-cuisson pizza ne sont pas encore isolés dans une Work Unit dédiée faute de responsabilité ingrédient structurée dans le modèle ;
+- les durées estimées restent `null` pour éviter de créer un Scheduler implicite ;
+- aucune constitution de batch ou de fournée n'est faite à cette étape.
+
+Tests de validation :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/work-units.ts src/lib/work-units.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API ;
+- `git diff --check` : réussi.
+
+Risques restants :
+
+- la projection WorkUnit doit être comparée aux comportements legacy avant toute utilisation par un poste ;
+- le futur diagnostic devra vérifier Pizzaiolo, Four et Pani'NO séparément ;
+- il ne faut pas persister les Work Units tant que la projection n'a pas été validée terrain.
 
 ---
 
@@ -2596,6 +2691,14 @@ Validation :
 Objectif :
 
 - dériver des `WorkUnit[]` depuis les `ProductionUnit[]`, sans Scheduler.
+
+Statut au 2026-08-03 :
+
+- implémenté dans `src/lib/work-units.ts` ;
+- testé dans `src/lib/work-units.test.ts` ;
+- non consommé par les postes ;
+- non persisté en base ;
+- sans Scheduler, Dispatcher, ProductionPlan ni Batch.
 
 Contraintes :
 
