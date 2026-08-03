@@ -1179,52 +1179,50 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Diagnostic des Work Units.
+Validation terrain du diagnostic WorkUnit avant Scheduler.
 ```
 
 ## Objectifs
 
-- comparer les `ProductionUnit[]` aux `WorkUnit[]` générées en mémoire ;
-- vérifier que chaque unité physique supportée produit le workflow attendu ;
-- détecter les unités sans workflow, notamment `other` ;
-- détecter les dépendances manquantes ou incohérentes ;
-- détecter les statuts projetés suspects sans corriger les données ;
-- conserver `ProductionUnit` et `WorkUnit` comme projections en lecture seule ;
+- exécuter le diagnostic WorkUnit sur un échantillon représentatif de commandes réelles ;
+- comparer les anomalies détectées avec les comportements legacy observables ;
+- qualifier les anomalies bloquantes, les avertissements et les cas volontairement non supportés ;
+- confirmer que le graphe WorkUnit peut servir d'entrée au futur Scheduler ;
+- conserver `ProductionUnit`, `WorkUnit` et leur diagnostic comme projections en lecture seule ;
 - ne modifier aucune table Supabase ;
 - ne modifier aucun poste ;
 - ne créer ni Scheduler, ni Dispatcher, ni ProductionPlan ;
 - rester déterministe et sans effet de bord ;
-- ajouter les tests unitaires du diagnostic ;
-- préparer la validation terrain avant toute intégration dans les postes.
+- ne pas exposer le diagnostic dans l'interface de production.
 
 ## Cas obligatoires
 
 ```text
-ProductionUnit pizza avec et sans post-cuisson -> workflow WorkUnit attendu
+graphe WorkUnit valide -> aucune anomalie
 ```
 
 ```text
-ProductionUnit Pani'NO -> pain et garniture parallèles, puis assemblage
+IDs dupliqués -> anomalie bloquante
 ```
 
 ```text
-ProductionUnit Fish & NO -> poisson et accompagnement parallèles, puis assemblage
+dépendance manquante -> anomalie bloquante
 ```
 
 ```text
-ProductionUnit frites ou grenailles -> cuisson puis packaging
+cycle de dépendances -> anomalie bloquante
 ```
 
 ```text
-ProductionUnit other -> absence de workflow signalée
+WorkUnit available avec dépendance non completed -> anomalie bloquante
 ```
 
 ```text
-statuts cancelled, failed, ready et delivered -> cohérence globale des Work Units
+ProductionUnit sans WorkUnit -> anomalie à qualifier
 ```
 
 ```text
-dépendances WorkUnit -> toutes résolues vers une WorkUnit existante
+produit supporté sans workflow -> anomalie bloquante
 ```
 
 ```text
@@ -1725,6 +1723,63 @@ Risques restants :
 - la projection WorkUnit doit être comparée aux comportements legacy avant toute utilisation par un poste ;
 - le futur diagnostic devra vérifier Pizzaiolo, Four et Pani'NO séparément ;
 - il ne faut pas persister les Work Units tant que la projection n'a pas été validée terrain.
+
+---
+
+## 2026-08-03 - Diagnostic WorkUnit en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/work-units-decomposition`
+
+Fichiers :
+
+- `src/lib/work-units-diagnostics.ts`
+- `src/lib/work-units-diagnostics.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- `ProductionUnit` existait comme projection pure en mémoire ;
+- `WorkUnit` existait comme projection pure en mémoire ;
+- aucun module ne validait encore la cohérence du graphe `WorkUnit[]` ;
+- aucun poste KDS ne consommait encore les Work Units.
+
+Statut après :
+
+- `diagnoseWorkUnits()` produit un rapport structuré en mémoire ;
+- le diagnostic ne modifie ni les `ProductionUnit[]`, ni les `WorkUnit[]`, ni Supabase ;
+- aucune table Supabase, aucun poste KDS, aucune interface, aucun Scheduler, Dispatcher ou ProductionPlan n'a été modifié ;
+- le rapport compte les Production Units, les Work Units, les Work Units par type de produit et les Work Units par statut ;
+- le diagnostic détecte les IDs WorkUnit dupliqués ;
+- il détecte les dépendances vers une WorkUnit inexistante ;
+- il détecte les cycles dans le graphe de dépendances ;
+- il détecte une WorkUnit `available` alors qu'une dépendance existante n'est pas `completed` ;
+- il détecte les Production Units sans WorkUnit ;
+- il distingue les produits supportés sans workflow des produits non supportés comme `other`.
+
+Tests :
+
+- graphe valide généré depuis `buildWorkUnits()` ;
+- ID WorkUnit dupliqué ;
+- dépendance manquante ;
+- cycle de dépendances ;
+- WorkUnit `available` avec dépendance `in_progress` ;
+- ProductionUnit sans WorkUnit ;
+- produit supporté sans workflow ;
+- produit `other` sans workflow supporté.
+
+Tests de validation :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/work-units.ts src/lib/work-units.test.ts src/lib/work-units-diagnostics.ts src/lib/work-units-diagnostics.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API.
+
+Risques restants :
+
+- le diagnostic n'a pas encore été exécuté sur des données Supabase réelles ;
+- certains cas `other` doivent être qualifiés métier par métier avant de devenir bloquants ;
+- le Scheduler ne doit pas démarrer tant que les anomalies du diagnostic n'ont pas été interprétées.
 
 ---
 
