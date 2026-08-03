@@ -1165,6 +1165,8 @@ Conformité actuelle : Document de pilotage
 | Bases réelles | Partielle | Élevé | Haute | Migration Supabase |
 | Production Units | Implémentées et testées en mémoire | Moyen | À valider | Modèle de données |
 | Work Units | Projection minimale implémentée et testée en mémoire | Moyen | À valider | Diagnostic |
+| Diagnostic WorkUnit | Implémenté et testé en mémoire | Moyen | À valider terrain | Work Units |
+| Scheduler Core | Implémenté, testé technique et validé métier en mémoire | Moyen | À valider terrain sur données réelles | Diagnostic WorkUnit |
 | Quatre disques | À développer | Moyen | Haute | Production Units |
 | Commande complète au Four | Partielle | Élevé | Haute | États individuels |
 | OF Pain | À vérifier | Élevé | Haute | Work Units |
@@ -1179,50 +1181,70 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Validation terrain du diagnostic WorkUnit avant Scheduler.
+Création des Batchs projetés en mémoire.
 ```
+
+## Pourquoi
+
+- la validation métier du Scheduler Core n'a révélé aucune incohérence structurelle sur les chaînes normales ;
+- les dépendances absentes sont détectées par `diagnoseWorkUnits()` et les Work Units concernées ne sont pas planifiées ;
+- le Scheduler produit maintenant une liste ordonnée et groupée par poste, mais ne regroupe pas encore les travaux compatibles ;
+- l'étape suivante logique est donc une projection pure de Batchs en mémoire.
 
 ## Objectifs
 
-- exécuter le diagnostic WorkUnit sur un échantillon représentatif de commandes réelles ;
-- comparer les anomalies détectées avec les comportements legacy observables ;
-- qualifier les anomalies bloquantes, les avertissements et les cas volontairement non supportés ;
-- confirmer que le graphe WorkUnit peut servir d'entrée au futur Scheduler ;
-- conserver `ProductionUnit`, `WorkUnit` et leur diagnostic comme projections en lecture seule ;
+- créer un module pur de constitution de Batchs à partir du plan Scheduler Core ;
+- regrouper uniquement des Work Units compatibles ;
+- préserver l'identité de chaque Work Unit ;
+- rester déterministe et sans effet de bord ;
+- conserver `ProductionUnit`, `WorkUnit`, leur diagnostic et le Scheduler Core comme projections en lecture seule ;
 - ne modifier aucune table Supabase ;
 - ne modifier aucun poste ;
-- ne créer ni Scheduler, ni Dispatcher, ni ProductionPlan ;
-- rester déterministe et sans effet de bord ;
+- ne créer aucun Dispatcher ni ProductionPlan persistant ;
 - ne pas exposer le diagnostic dans l'interface de production.
 
-## Cas obligatoires
+## Hors périmètre
 
 ```text
-graphe WorkUnit valide -> aucune anomalie
+persistance Supabase
 ```
 
 ```text
-IDs dupliqués -> anomalie bloquante
+interface
 ```
 
 ```text
-dépendance manquante -> anomalie bloquante
+Dispatcher
 ```
 
 ```text
-cycle de dépendances -> anomalie bloquante
+calcul d'heure de démarrage
 ```
 
 ```text
-WorkUnit available avec dépendance non completed -> anomalie bloquante
+priorité manuelle
 ```
 
 ```text
-ProductionUnit sans WorkUnit -> anomalie à qualifier
+apprentissage
+```
+
+## Critères de validation
+
+```text
+Batchs déterministes
 ```
 
 ```text
-produit supporté sans workflow -> anomalie bloquante
+aucune Work Unit dupliquée ou perdue
+```
+
+```text
+aucune dépendance violée
+```
+
+```text
+aucun Batch persistant
 ```
 
 ```text
@@ -1780,6 +1802,91 @@ Risques restants :
 - le diagnostic n'a pas encore été exécuté sur des données Supabase réelles ;
 - certains cas `other` doivent être qualifiés métier par métier avant de devenir bloquants ;
 - le Scheduler ne doit pas démarrer tant que les anomalies du diagnostic n'ont pas été interprétées.
+
+---
+
+## 2026-08-03 - Scheduler Core en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/scheduler-core`
+
+Fichiers :
+
+- `src/lib/scheduler-core.ts`
+- `src/lib/scheduler-core.test.ts`
+- `src/lib/scheduler-core.business.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- `ProductionUnit` existait comme projection pure en mémoire ;
+- `WorkUnit` existait comme projection pure en mémoire ;
+- `diagnoseWorkUnits()` validait déjà la cohérence du graphe `WorkUnit[]` ;
+- aucun Scheduler n'existait encore dans `src`.
+
+Statut après :
+
+- `buildSchedulerPlan()` produit un plan d'exécution en mémoire ;
+- le Scheduler Core reçoit uniquement des `WorkUnit[]` ;
+- il ne modifie jamais les Work Units d'entrée ;
+- il ne lit ni n'écrit Supabase ;
+- aucun poste KDS, aucune interface, aucun Dispatcher, aucun Batch et aucun ProductionPlan persistant n'a été modifié ou créé.
+
+Règles réellement implémentées :
+
+- seules les Work Units `available` sont sélectionnées ;
+- une Work Unit `available` n'est planifiée que si toutes ses dépendances existent et sont `completed` ;
+- les Work Units sont regroupées par `targetStation`, dérivée de `WorkUnit.station` ;
+- l'ordre des postes est déterministe : `pizzaiolo`, `four`, `panino`, `fish_fryer`, `fries_fryer`, `handover` ;
+- l'ordre interne est déterministe : heure demandée, commande, ProductionUnit, noeud de workflow, identifiant WorkUnit ;
+- les heures `null` sont placées après les heures connues ;
+- le plan contient une séquence globale et une séquence par poste ;
+- les Work Units exposées dans le plan sont copiées afin d'éviter toute mutation indirecte des entrées.
+
+Tests :
+
+- sélection des Work Units `available` uniquement ;
+- respect des dépendances `completed` ;
+- dépendance manquante ou non terminée non planifiée ;
+- groupement par `targetStation` ;
+- ordre déterministe même si l'entrée est inversée ;
+- séquences globales et par poste ;
+- absence de mutation des Work Units d'entrée.
+
+Scénarios métier validés en chaîne complète :
+
+- commande pizza simple -> `ProductionUnit` -> `WorkUnit` -> diagnostic -> Scheduler : seule la préparation Pizzaiolo est planifiée ;
+- pizza préparée legacy (`prepared === true`) : la cuisson Four devient planifiable ;
+- pizza avec post-cuisson : la finition n'est pas planifiée avant cuisson terminée ;
+- Pani'NO : pain Pizzaiolo et garniture Pani'NO sont planifiés avant assemblage ;
+- Fish & NO : cuisson poisson et accompagnement sont planifiés avant assemblage puis packaging ;
+- frites et grenailles : les cuissons sont affectées au poste `fries_fryer` ;
+- commande mixte pizza + Pani'NO : les tâches exécutables sont réparties entre `pizzaiolo` et `panino` sans perdre l'ordre déterministe ;
+- plusieurs commandes au même horaire : le résultat reste stable quel que soit l'ordre des données d'entrée ;
+- heure demandée absente : les Work Units sans `requestedTime` sont classées après celles qui ont une heure dans un même poste ;
+- dépendance absente volontaire : le diagnostic signale l'incohérence et la Work Unit concernée n'est pas planifiée ;
+- absence de mutation sur les commandes, Production Units et Work Units d'entrée.
+
+Tests de validation :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/scheduler-core.ts src/lib/scheduler-core.test.ts src/lib/scheduler-core.business.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API ;
+- `git diff --check` : réussi.
+
+Incohérences détectées :
+
+- aucune incohérence structurelle sur les chaînes normales construites depuis les adaptateurs existants ;
+- une dépendance absente est bien distinguée d'une tâche simplement bloquée : elle rend le diagnostic incohérent et le Scheduler ne la planifie pas.
+
+Risques restants :
+
+- le Scheduler Core n'a pas encore été comparé à un flux réel Supabase ;
+- certains états intermédiaires métier restent simulés au niveau `WorkUnit`, car ils ne disposent pas encore tous d'une source persistée dédiée ;
+- aucune constitution de Batch n'est faite ;
+- aucune priorité métier fine n'est encore calculée ;
+- aucun ProductionPlan public n'est encore produit.
 
 ---
 
@@ -2806,6 +2913,37 @@ Validation :
 - mêmes exclusions que `cashier-flow`;
 - même stock pâtons attendu que `computeStock()`;
 - différences explicitement listées au lieu d'être masquées.
+
+### Étape 3bis - Scheduler Core en mémoire
+
+Objectif :
+
+- ordonner les `WorkUnit[]` déjà validées, sans Batch, sans Dispatcher et sans ProductionPlan persistant.
+
+Statut au 2026-08-03 :
+
+- implémenté dans `src/lib/scheduler-core.ts` ;
+- testé dans `src/lib/scheduler-core.test.ts` ;
+- validé métier dans `src/lib/scheduler-core.business.test.ts` ;
+- non consommé par les postes ;
+- non persisté en base ;
+- sans Batch, Dispatcher ni ProductionPlan.
+
+Contraintes :
+
+- Work Units `available` uniquement ;
+- dépendances `completed` obligatoires ;
+- groupement par `targetStation` ;
+- ordre déterministe ;
+- aucune mutation des entrées.
+
+Validation :
+
+- les Work Units non disponibles sont ignorées ;
+- les Work Units dont une dépendance manque ou n'est pas terminée sont ignorées ;
+- les postes sont groupés dans un ordre stable ;
+- deux entrées équivalentes produisent le même plan.
+- les chaînes pizza, pizza préparée, pizza avec post-cuisson, Pani'NO, Fish & NO, frites, grenailles et commande mixte produisent les postes attendus.
 
 ### Étape 4 - Premier lecteur Pizzaiolo, sans changement visuel majeur
 
