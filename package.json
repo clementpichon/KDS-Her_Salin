@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
-    "test": "jiti src/lib/cashier-flow.test.ts && jiti src/lib/production-units.test.ts && jiti src/lib/production-units-diagnostics.test.ts && jiti src/lib/work-units.test.ts && jiti src/lib/work-units-diagnostics.test.ts && jiti src/lib/scheduler-core.test.ts && jiti src/lib/scheduler-core.business.test.ts",
+    "test": "jiti src/lib/cashier-flow.test.ts && jiti src/lib/production-units.test.ts && jiti src/lib/production-units-diagnostics.test.ts && jiti src/lib/work-units.test.ts && jiti src/lib/work-units-diagnostics.test.ts && jiti src/lib/scheduler-core.test.ts && jiti src/lib/scheduler-core.business.test.ts && jiti src/lib/batch-builder.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

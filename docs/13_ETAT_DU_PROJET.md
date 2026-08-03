@@ -1167,6 +1167,7 @@ Conformité actuelle : Document de pilotage
 | Work Units | Projection minimale implémentée et testée en mémoire | Moyen | À valider | Diagnostic |
 | Diagnostic WorkUnit | Implémenté et testé en mémoire | Moyen | À valider terrain | Work Units |
 | Scheduler Core | Implémenté, testé technique et validé métier en mémoire | Moyen | À valider terrain sur données réelles | Diagnostic WorkUnit |
+| Batch Builder | Implémenté et testé en mémoire | Moyen | À valider terrain sur données réelles | Scheduler Core |
 | Quatre disques | À développer | Moyen | Haute | Production Units |
 | Commande complète au Four | Partielle | Élevé | Haute | États individuels |
 | OF Pain | À vérifier | Élevé | Haute | Work Units |
@@ -1181,22 +1182,23 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Création des Batchs projetés en mémoire.
+Validation métier des Batchs projetés en mémoire.
 ```
 
 ## Pourquoi
 
-- la validation métier du Scheduler Core n'a révélé aucune incohérence structurelle sur les chaînes normales ;
-- les dépendances absentes sont détectées par `diagnoseWorkUnits()` et les Work Units concernées ne sont pas planifiées ;
-- le Scheduler produit maintenant une liste ordonnée et groupée par poste, mais ne regroupe pas encore les travaux compatibles ;
-- l'étape suivante logique est donc une projection pure de Batchs en mémoire.
+- le Batch Builder existe comme projection pure à partir du `SchedulerExecutionPlan` ;
+- les cuissons pizza Four sont regroupées par fournées de 4 en mémoire ;
+- les autres Work Units planifiées restent en batch unitaire ;
+- aucune comparaison avec un flux réel Supabase ou avec les comportements terrain observés n'a encore été faite.
 
 ## Objectifs
 
-- créer un module pur de constitution de Batchs à partir du plan Scheduler Core ;
-- regrouper uniquement des Work Units compatibles ;
-- préserver l'identité de chaque Work Unit ;
-- rester déterministe et sans effet de bord ;
+- exécuter le Batch Builder sur des scénarios terrain représentatifs ;
+- vérifier que les fournées pizza projetées correspondent bien à l'usage du poste Four ;
+- vérifier que le regroupement physique ne remplace pas l'ordre global du Scheduler ;
+- vérifier que les batchs unitaires ne créent pas de bruit inutile pour les autres postes ;
+- confirmer qu'aucune Work Unit planifiée n'est perdue ou dupliquée ;
 - conserver `ProductionUnit`, `WorkUnit`, leur diagnostic et le Scheduler Core comme projections en lecture seule ;
 - ne modifier aucune table Supabase ;
 - ne modifier aucun poste ;
@@ -1232,11 +1234,15 @@ apprentissage
 ## Critères de validation
 
 ```text
-Batchs déterministes
+fournées pizza Four cohérentes
 ```
 
 ```text
 aucune Work Unit dupliquée ou perdue
+```
+
+```text
+ordre global Scheduler préservé dans batchedWorkUnitIds
 ```
 
 ```text
@@ -1249,6 +1255,10 @@ aucun Batch persistant
 
 ```text
 aucune mutation des données d'entrée
+```
+
+```text
+batchs unitaires utiles ou à ajuster avant exposition terrain
 ```
 
 ---
@@ -1887,6 +1897,77 @@ Risques restants :
 - aucune constitution de Batch n'est faite ;
 - aucune priorité métier fine n'est encore calculée ;
 - aucun ProductionPlan public n'est encore produit.
+
+---
+
+## 2026-08-03 - Batch Builder en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/batch-builder`
+
+Fichiers :
+
+- `src/lib/batch-builder.ts`
+- `src/lib/batch-builder.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- `SchedulerExecutionPlan` existait comme plan d'exécution en mémoire ;
+- les Work Units planifiées n'étaient pas encore regroupées en Batchs ;
+- aucun Batch persistant n'existait dans la nouvelle architecture cible.
+
+Statut après :
+
+- `buildBatchPlan()` produit des Batchs projetés en mémoire ;
+- le module consomme uniquement un `SchedulerExecutionPlan` ;
+- il ne modifie jamais le plan Scheduler ni les Work Units d'entrée ;
+- il ne lit ni n'écrit Supabase ;
+- aucun poste KDS, aucune interface, aucun Dispatcher et aucun ProductionPlan persistant n'a été modifié ou créé.
+
+Règles réellement implémentées :
+
+- les Work Units `pizza.cooking` du poste Four sont regroupées en batchs `pizza_oven` ;
+- la capacité d'un batch `pizza_oven` est fixée à 4 pizzas ;
+- les Work Units à l'intérieur de chaque batch conservent leur ordre Scheduler ;
+- les batchs sont ordonnés selon la première `sequence` qu'ils contiennent ;
+- `batchedWorkUnitIds` conserve exactement l'ordre global `schedulerPlan.scheduledWorkUnitIds` ;
+- l'aplatissement des batchs par `batch.workUnitIds` ne doit pas être interprété comme ordre global d'exécution ;
+- les autres Work Units planifiées deviennent des batchs unitaires `single_work_unit` ;
+- les tâches Four qui ne sont pas `pizza.cooking` ne sont pas intégrées aux fournées pizza ;
+- chaque batch possède un identifiant déterministe ;
+- chaque batch expose `targetStation`, `batchType`, `capacity`, `sequence`, `stationSequence`, `isFull`, `workUnitIds` et les Work Units copiées ;
+- aucune Work Unit planifiée n'est perdue ou dupliquée.
+
+Tests :
+
+- 1 à 4 pizzas -> un batch pizza de capacité 4 ;
+- 5 pizzas -> batchs 4 + 1 ;
+- 8 pizzas -> batchs 4 + 4 ;
+- plusieurs commandes ;
+- ordre Scheduler conservé ;
+- deux pizzas séparées par une tâche d'un autre poste ;
+- tâches non cuisson Four exclues des fournées pizza ;
+- autres postes en batch unitaire ;
+- identifiants déterministes ;
+- aucune Work Unit perdue ou dupliquée ;
+- absence de mutation des entrées ;
+- même entrée -> même sortie.
+
+Tests de validation :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/batch-builder.ts src/lib/batch-builder.test.ts src/lib/scheduler-core.ts src/lib/scheduler-core.test.ts src/lib/scheduler-core.business.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API ;
+- `git diff --check` : réussi.
+
+Risques restants :
+
+- aucune comparaison avec un flux réel Supabase n'a encore été faite ;
+- les batchs unitaires des autres postes sont volontairement minimalistes ;
+- aucun regroupement par base, par ressource, par priorité manuelle ou par horaire de démarrage n'est encore fait ;
+- aucun Dispatcher et aucun ProductionPlan public n'existent encore.
 
 ---
 
@@ -2944,6 +3025,39 @@ Validation :
 - les postes sont groupés dans un ordre stable ;
 - deux entrées équivalentes produisent le même plan.
 - les chaînes pizza, pizza préparée, pizza avec post-cuisson, Pani'NO, Fish & NO, frites, grenailles et commande mixte produisent les postes attendus.
+
+### Étape 3ter - Batch Builder en mémoire
+
+Objectif :
+
+- regrouper les Work Units déjà planifiées en Batchs projetés, sans Dispatcher et sans ProductionPlan persistant.
+
+Statut au 2026-08-03 :
+
+- implémenté dans `src/lib/batch-builder.ts` ;
+- testé dans `src/lib/batch-builder.test.ts` ;
+- non consommé par les postes ;
+- non persisté en base ;
+- sans Dispatcher ni ProductionPlan.
+
+Contraintes :
+
+- entrée unique : `SchedulerExecutionPlan` ;
+- fournées pizza Four limitées à `pizza.cooking` ;
+- capacité pizza Four : 4 ;
+- autres postes en batch unitaire ;
+- ordre Scheduler conservé dans chaque batch et dans `batchedWorkUnitIds` ;
+- `batches.flatMap(batch.workUnitIds)` n'est pas l'ordre global d'exécution ;
+- aucune mutation des entrées.
+
+Validation :
+
+- 1 à 4 pizzas créent une seule fournée projetée ;
+- 5 pizzas créent 4 + 1 ;
+- 8 pizzas créent 4 + 4 ;
+- deux cuissons pizza séparées par une tâche Pani'NO restent regroupables physiquement sans modifier `batchedWorkUnitIds` ;
+- les autres postes restent unitaires ;
+- aucune Work Unit planifiée n'est perdue ou dupliquée.
 
 ### Étape 4 - Premier lecteur Pizzaiolo, sans changement visuel majeur
 
