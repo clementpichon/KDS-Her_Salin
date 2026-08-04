@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-03 - validation silencieuse ProductionPlan
+> Dernière mise à jour : 2026-08-04 - première validation terrain ProductionPlan
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -2147,7 +2147,7 @@ Contrat du snapshot :
 
 - `snapshotId` : identifiant local du snapshot ;
 - `capturedAt` : horodatage de capture ou `null` ;
-- `source` : `kds_runtime`, `json_export` ou `fixture` ;
+- `source` : `kds_runtime`, `json_export`, `supabase-manual-export` ou `fixture` ;
 - `orders` : commandes nécessaires au lien client/horaire/statut ;
 - `orderItems` : pizzas physiques issues de `order_items` ;
 - `paninoItems` : produits physiques issus de `panino_order_items` ;
@@ -2252,6 +2252,324 @@ Prochaine étape recommandée :
 
 ```text
 Exécuter compareProductionPlanWithLegacy() sur un export Supabase réel anonymisé, puis analyser les warnings avant tout branchement sur un poste.
+```
+
+---
+
+## 2026-08-04 - Préparation export Supabase anonymisé et exécuteur local
+
+Date : 2026-08-04
+Branche : `refactor/production-plan-shadow-validation`
+Commit du socle validé : `9ecb1e3`
+
+Fichiers créés :
+
+- `scripts/validate-production-plan.ts`
+
+Fichiers modifiés :
+
+- `.gitignore`
+- `package.json`
+- `src/lib/production-plan-shadow-validation.ts`
+- `src/lib/production-plan-shadow-validation.test.ts`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Fichiers locaux non suivis :
+
+- `.local/production-plan/supabase-export.raw.json`
+- `.local/production-plan/supabase-export.anonymized.json`
+- `.local/production-plan/shadow-report.json` après exécution du script.
+
+Statut :
+
+- `.local/` est ignoré par Git ;
+- aucun export Supabase réel n'est présent dans le dépôt au moment de cette passe ;
+- aucun nom, téléphone ou commentaire réel n'a été ajouté ;
+- l'exécuteur local anonymise le snapshot en mémoire avant comparaison ;
+- le rapport JSON est écrit localement et ne doit pas être commité ;
+- aucune connexion Supabase directe n'est créée dans le code.
+
+Commande manuelle :
+
+```bash
+npm run validate:production-plan -- .local/production-plan/supabase-export.raw.json \
+  --anonymized-out .local/production-plan/supabase-export.anonymized.json \
+  --json-out .local/production-plan/shadow-report.json
+```
+
+Règles de sécurité du script :
+
+- lecture fichier local uniquement ;
+- aucune clé Supabase ;
+- aucun appel réseau ;
+- aucune écriture KDS ;
+- aucune modification d'état ;
+- code retour non nul uniquement si le snapshot est invalide ou si des `blocking_difference` existent.
+
+Requête SQL de lecture par plage horaire :
+
+```sql
+WITH params AS (
+  SELECT
+    TIMESTAMPTZ '2026-08-04 19:00:00+02' AS start_at,
+    TIMESTAMPTZ '2026-08-04 22:30:00+02' AS end_at
+),
+selected_orders AS (
+  SELECT
+    orders.id,
+    orders.customer_name,
+    orders.customer_phone,
+    orders.customer_phone_hash,
+    orders.notes,
+    orders.requested_time,
+    orders.status,
+    orders.cancelled_at,
+    orders.pains_panino_status,
+    orders.pizzaiolo_queue_position,
+    orders.prep_start_time,
+    orders.created_at,
+    orders.updated_at
+  FROM public.orders AS orders
+  CROSS JOIN params
+  WHERE orders.requested_time >= params.start_at
+    AND orders.requested_time < params.end_at
+)
+SELECT jsonb_build_object(
+  'snapshotId', 'supabase-export-' || to_char(now(), 'YYYYMMDDHH24MISS'),
+  'capturedAt', now(),
+  'source', 'json_export',
+  'orders', COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', id::text,
+        'customer_name', customer_name,
+        'customer_phone', customer_phone,
+        'customer_phone_hash', customer_phone_hash,
+        'notes', notes,
+        'requested_time', requested_time::text,
+        'status', status::text,
+        'cancelled_at', cancelled_at::text,
+        'pains_panino_status', pains_panino_status,
+        'pizzaiolo_queue_position', pizzaiolo_queue_position,
+        'prep_start_time', prep_start_time::text,
+        'created_at', created_at::text,
+        'updated_at', updated_at::text
+      )
+      ORDER BY requested_time, id
+    )
+    FROM selected_orders
+  ), '[]'::jsonb),
+  'orderItems', COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', item.id::text,
+        'order_id', item.order_id::text,
+        'pizza_id', item.pizza_id::text,
+        'pizza_name', item.pizza_name,
+        'base', item.base,
+        'default_base_snapshot', item.default_base_snapshot,
+        'explicit_base_snapshot', item.explicit_base_snapshot,
+        'base_resolution', item.base_resolution,
+        'base_confidence', item.base_confidence,
+        'extras', item.extras,
+        'removed', item.removed,
+        'prepared', item.prepared,
+        'production_status', item.production_status,
+        'oven_batch_id', item.oven_batch_id::text,
+        'sent_to_oven_at', item.sent_to_oven_at::text,
+        'ready_at', item.ready_at::text,
+        'cut_into', item.cut_into,
+        'created_at', item.created_at::text
+      )
+      ORDER BY selected_orders.requested_time, item.order_id, item.created_at, item.id
+    )
+    FROM public.order_items AS item
+    JOIN selected_orders ON selected_orders.id = item.order_id
+  ), '[]'::jsonb),
+  'paninoItems', COALESCE((
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'id', item.id::text,
+        'order_id', item.order_id::text,
+        'product_key', item.product_key,
+        'product_name', item.product_name,
+        'base', item.base,
+        'fries_mode', item.fries_mode,
+        'side', item.side,
+        'sauces', item.sauces,
+        'removed', item.removed,
+        'extras', item.extras,
+        'status', item.status::text,
+        'done_at', item.done_at::text,
+        'created_at', item.created_at::text
+      )
+      ORDER BY selected_orders.requested_time, item.order_id, item.created_at, item.id
+    )
+    FROM public.panino_order_items AS item
+    JOIN selected_orders ON selected_orders.id = item.order_id
+  ), '[]'::jsonb)
+) AS production_plan_snapshot;
+```
+
+Variante par liste explicite de commandes :
+
+```sql
+WITH selected_orders AS (
+  SELECT
+    orders.id,
+    orders.customer_name,
+    orders.customer_phone,
+    orders.customer_phone_hash,
+    orders.notes,
+    orders.requested_time,
+    orders.status,
+    orders.cancelled_at,
+    orders.pains_panino_status,
+    orders.pizzaiolo_queue_position,
+    orders.prep_start_time,
+    orders.created_at,
+    orders.updated_at
+  FROM public.orders AS orders
+  WHERE orders.id = ANY(ARRAY[
+    '00000000-0000-0000-0000-000000000000'::uuid
+  ])
+)
+-- Réutiliser ensuite le SELECT jsonb_build_object de la requête par plage horaire.
+```
+
+Anonymisation vérifiée :
+
+- `customer_name` -> `Client 001`, `Client 002`, etc. ;
+- `customer_phone` -> `null` ;
+- `customer_phone_hash` -> `null` ;
+- `notes`, `comment`, `comments`, `customer_notes`, `internal_notes` -> `null` ;
+- identifiants externes -> `null` ;
+- `orders.id`, `order_items.id`, `panino_order_items.id` -> identifiants fictifs déterministes ;
+- relations `order_id` conservées avec les identifiants fictifs.
+
+Préservation opérationnelle :
+
+- heures demandées ;
+- statuts ;
+- produits ;
+- bases ;
+- suppléments ;
+- retraits ;
+- états four/Pani'NO utiles ;
+- relations commande/articles.
+
+Analyse du premier export local disponible :
+
+- fichier brut inspecté localement : `.local/production-plan/supabase-export.raw.json` ;
+- `snapshotId` brut : `local-raw-export-template` ;
+- plage horaire de l'échantillon : non disponible dans le snapshot ;
+- nombre de commandes analysées : 0 ;
+- nombre de produits analysés : 0 ;
+- pizzas analysées : 0 ;
+- produits Pani'NO / Fish & NO / frites analysés : 0 ;
+- matchs legacy / ProductionPlan : 15 ;
+- warnings : 0 ;
+- différences bloquantes : 0 ;
+- cas non supportés : 0 ;
+- `ProductionPlan` exploitable : oui, sur échantillon vide uniquement.
+
+Interprétation :
+
+- le pipeline d'anonymisation et de comparaison s'exécute correctement ;
+- le fichier local actuellement présent reste un gabarit vide et ne permet pas de valider le comportement métier sur des données réelles ;
+- aucun warning, aucune différence bloquante et aucun cas non supporté ne peuvent être analysés sur cet échantillon ;
+- aucune donnée client n'a été ajoutée au dépôt ou à la documentation.
+
+Écarts observés :
+
+- erreurs métier confirmées : aucune ;
+- faux positifs confirmés : aucun ;
+- ambiguïtés legacy : aucune observable sur cet échantillon vide ;
+- causes principales : échantillon local non peuplé, donc absence de matière métier à comparer ;
+- limitations restantes : relancer la validation avec un export Supabase non vide couvrant un service réel ;
+- corrections moteur : aucune correction métier appliquée.
+
+Prochaine étape recommandée :
+
+```text
+Remplacer le gabarit `.local/production-plan/supabase-export.raw.json` par un export Supabase anonymisable non vide, relancer le script de validation, puis analyser manuellement chaque warning avant toute modification moteur.
+```
+
+---
+
+## 2026-08-04 - Première validation terrain ProductionPlan sur export Supabase
+
+Date : 2026-08-04
+Branche : `refactor/production-plan-shadow-validation`
+Commit du socle validé : `9ecb1e3`
+
+Source :
+
+- export Supabase réel fourni manuellement ;
+- snapshot local brut : `.local/production-plan/supabase-export.raw.json` ;
+- snapshot anonymisé : `.local/production-plan/supabase-export.anonymized.json` ;
+- rapport local : `.local/production-plan/shadow-report.json` ;
+- aucun fichier `.local` ne doit être commité.
+
+Taille de l'échantillon :
+
+- commandes : 3 ;
+- produits physiques : 9 ;
+- pizzas : 9 ;
+- items Pani'NO / Fish & NO / frites : 0 ;
+- ProductionUnits : 9 ;
+- WorkUnits : 27 ;
+- batchs : 9.
+
+Résultat de la shadow validation :
+
+- `planUsable` : `true` ;
+- matchs : 15 ;
+- warnings : 0 ;
+- différences bloquantes : 0 ;
+- cas non supportés : 0.
+
+Interprétation métier :
+
+- les 9 pizzas Supabase sont correctement projetées en 9 `ProductionUnit` de type `pizza` ;
+- les 27 `WorkUnit` correspondent au workflow pizza minimal en mémoire ;
+- pour cet échantillon, seules les 9 tâches de préparation Pizzaiolo sont immédiatement planifiables ;
+- les tâches Four restent bloquées tant que leur dépendance de préparation Pizzaiolo n'est pas terminée ;
+- aucun produit Pani'NO, Fish & NO, frite ou grenaille n'est présent dans cet échantillon, donc ces workflows ne sont pas validés par cette passe.
+
+Contrat `source` :
+
+- le snapshot manuel initial utilisait `source = "supabase-manual-export"` ;
+- le validateur local n'acceptait auparavant que `kds_runtime`, `json_export` et `fixture` ;
+- le contrat accepte désormais aussi `supabase-manual-export`, sans ajouter de logique Supabase, d'appel réseau ou d'écriture ;
+- `json_export` reste compatible et reste utilisé par la requête SQL générique.
+
+Garanties de sécurité conservées :
+
+- aucune écriture Supabase ;
+- aucune modification d'état de commande ;
+- aucune migration ;
+- aucun branchement sur les postes Caisse, Pizzaiolo, Four, Pani'NO ou Prêtes ;
+- aucune persistance du `ProductionPlan` ;
+- aucun Dispatcher ;
+- aucune donnée client mentionnée dans la documentation.
+
+Erreurs métier confirmées :
+
+- aucune erreur métier confirmée sur cet échantillon.
+
+Limites restantes :
+
+- échantillon limité aux pizzas `to_prepare` ;
+- aucun cas pizza préparée, en cuisson, prête, livrée ou annulée ;
+- aucun cas avec post-cuisson validé sur export réel ;
+- aucun produit Pani'NO, Fish & NO, frites ou grenailles ;
+- aucune comparaison terrain avec des compteurs legacy fournis dans le snapshot.
+
+Prochaine étape recommandée :
+
+```text
+Exécuter un second export réel plus riche couvrant une pizza préparée, une pizza en cuisson, une commande prête ou livrée, une commande annulée, plusieurs bases, une pizza avec post-cuisson et au moins un produit Pani'NO ou Fish & NO dès que ces données existent.
 ```
 
 ---

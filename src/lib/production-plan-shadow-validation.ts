@@ -13,7 +13,14 @@ import type {
 } from "./production-units";
 import type { WorkUnitStation } from "./work-units";
 
-export type ProductionPlanSnapshotSource = "kds_runtime" | "json_export" | "fixture";
+export const PRODUCTION_PLAN_SNAPSHOT_SOURCES = [
+  "kds_runtime",
+  "json_export",
+  "supabase-manual-export",
+  "fixture",
+] as const;
+
+export type ProductionPlanSnapshotSource = (typeof PRODUCTION_PLAN_SNAPSHOT_SOURCES)[number];
 
 export type ShadowValidationClassification =
   | "match"
@@ -25,6 +32,7 @@ export interface ProductionPlanSnapshotSensitiveFields {
   phone?: string | null;
   customer_phone?: string | null;
   customer_phone_number?: string | null;
+  customer_phone_hash?: string | null;
   external_id?: string | null;
   external_order_id?: string | null;
   external_item_id?: string | null;
@@ -984,6 +992,7 @@ function stripSensitiveFields<T extends ProductionPlanSnapshotSensitiveFields>(v
     phone: null,
     customer_phone: null,
     customer_phone_number: null,
+    customer_phone_hash: null,
     external_id: null,
     external_order_id: null,
     external_item_id: null,

@@ -32,6 +32,7 @@ function order({
     status,
     cancelled_at: null,
     phone: "06 00 00 00 00",
+    customer_phone_hash: "phone-hash",
     external_order_id: "external-order",
     comment: "Appeler Michel a l'arrivee.",
     ...(painsPaninoStatus ? { pains_panino_status: painsPaninoStatus } : {}),
@@ -113,16 +114,18 @@ function snapshot({
   orderItems = [],
   paninoItems = [],
   legacy,
+  source = "fixture",
 }: {
   orders?: readonly ProductionPlanSnapshotOrder[];
   orderItems?: readonly ProductionPlanSnapshotOrderItem[];
   paninoItems?: readonly ProductionPlanSnapshotPaninoItem[];
   legacy?: ProductionPlanSnapshot["legacy"];
+  source?: ProductionPlanSnapshot["source"];
 } = {}): ProductionPlanSnapshot {
   return {
     snapshotId: "snapshot-test",
     capturedAt: "2026-08-03T19:00:00.000Z",
-    source: "fixture",
+    source,
     orders,
     orderItems,
     paninoItems,
@@ -387,6 +390,19 @@ function assertNoBlocking(report: ProductionPlanShadowValidationReport) {
 }
 
 {
+  const input = snapshot({
+    source: "supabase-manual-export",
+    orderItems: [pizzaItem()],
+  });
+  const anonymized = anonymizeProductionPlanSnapshot(input);
+  const report = compareProductionPlanWithLegacy(anonymized);
+
+  assert.equal(anonymized.source, "supabase-manual-export");
+  assertNoBlocking(report);
+  assert.equal(report.counts.source.physicalProducts, 1);
+}
+
+{
   const source = snapshot({
     orders: [order({ id: "sensitive-order", customerName: "Client Reel" })],
     orderItems: [pizzaItem({ id: "sensitive-pizza", orderId: "sensitive-order" })],
@@ -402,6 +418,7 @@ function assertNoBlocking(report: ProductionPlanShadowValidationReport) {
   assert.equal(first.orders[0]?.id, "order-001");
   assert.equal(first.orders[0]?.customer_name, "Client 001");
   assert.equal(first.orders[0]?.phone, null);
+  assert.equal(first.orders[0]?.customer_phone_hash, null);
   assert.equal(first.orders[0]?.comment, null);
   assert.equal(first.orderItems?.[0]?.id, "pizza-item-001");
   assert.equal(first.orderItems?.[0]?.order_id, "order-001");
