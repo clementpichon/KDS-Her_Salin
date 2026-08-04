@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-02 - audit ProductionUnit / WorkUnit
+> Dernière mise à jour : 2026-08-03 - validation silencieuse ProductionPlan
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -1168,6 +1168,7 @@ Conformité actuelle : Document de pilotage
 | Diagnostic WorkUnit | Implémenté et testé en mémoire | Moyen | À valider terrain | Work Units |
 | Scheduler Core | Implémenté, testé technique et validé métier en mémoire | Moyen | À valider terrain sur données réelles | Diagnostic WorkUnit |
 | Batch Builder | Implémenté et testé en mémoire | Moyen | À valider terrain sur données réelles | Scheduler Core |
+| ProductionPlan | Vue consolidée en mémoire implémentée et testée | Moyen | À valider terrain sur données réelles | Batch Builder |
 | Quatre disques | À développer | Moyen | Haute | Production Units |
 | Commande complète au Four | Partielle | Élevé | Haute | États individuels |
 | OF Pain | À vérifier | Élevé | Haute | Work Units |
@@ -1182,24 +1183,26 @@ Conformité actuelle : Document de pilotage
 La prochaine tâche doit rester limitée.
 
 ```text
-Validation métier des Batchs projetés en mémoire.
+Exécuter la comparaison silencieuse ProductionPlan sur un export Supabase anonymisé réel.
 ```
 
 ## Pourquoi
 
-- le Batch Builder existe comme projection pure à partir du `SchedulerExecutionPlan` ;
-- les cuissons pizza Four sont regroupées par fournées de 4 en mémoire ;
-- les autres Work Units planifiées restent en batch unitaire ;
-- aucune comparaison avec un flux réel Supabase ou avec les comportements terrain observés n'a encore été faite.
+- `buildProductionPlan()` orchestre la chaîne pure en mémoire :
+  `buildProductionUnits()` -> `buildWorkUnits()` -> `diagnoseWorkUnits()` -> `buildSchedulerPlan()` -> `buildBatchPlan()` ;
+- le plan consolide les unités physiques, les tâches, le diagnostic, le Scheduler, les Batchs, les compteurs, les vues par poste et les anomalies bloquantes ;
+- une couche de comparaison silencieuse existe désormais pour traiter un snapshot exporté sans écriture ;
+- elle a été testée sur des fixtures synthétiques et un export JSON anonymisé représentatif ;
+- elle n'a pas encore été exécutée sur un export terrain réel anonymisé.
 
 ## Objectifs
 
-- exécuter le Batch Builder sur des scénarios terrain représentatifs ;
-- vérifier que les fournées pizza projetées correspondent bien à l'usage du poste Four ;
-- vérifier que le regroupement physique ne remplace pas l'ordre global du Scheduler ;
-- vérifier que les batchs unitaires ne créent pas de bruit inutile pour les autres postes ;
-- confirmer qu'aucune Work Unit planifiée n'est perdue ou dupliquée ;
-- conserver `ProductionUnit`, `WorkUnit`, leur diagnostic et le Scheduler Core comme projections en lecture seule ;
+- construire un `ProductionPlanSnapshot` anonymisé depuis les tables `orders`, `order_items` et `panino_order_items` ;
+- exécuter `compareProductionPlanWithLegacy()` localement et explicitement ;
+- vérifier les compteurs produits, les statuts, les charges actives par poste et les produits sans workflow ;
+- lister les divergences legacy sans modifier l'interface ni les données ;
+- décider ensuite si le premier lecteur Pizzaiolo en lecture seule peut être préparé ;
+- conserver `ProductionUnit`, `WorkUnit`, leur diagnostic, le Scheduler Core et le Batch Builder comme projections en lecture seule ;
 - ne modifier aucune table Supabase ;
 - ne modifier aucun poste ;
 - ne créer aucun Dispatcher ni ProductionPlan persistant ;
@@ -1967,7 +1970,289 @@ Risques restants :
 - aucune comparaison avec un flux réel Supabase n'a encore été faite ;
 - les batchs unitaires des autres postes sont volontairement minimalistes ;
 - aucun regroupement par base, par ressource, par priorité manuelle ou par horaire de démarrage n'est encore fait ;
-- aucun Dispatcher et aucun ProductionPlan public n'existent encore.
+- aucun Dispatcher et aucun ProductionPlan persistant n'existent encore ;
+- aucun poste KDS ne consomme encore les Batchs projetés.
+
+---
+
+## 2026-08-03 - ProductionPlan en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/production-plan`
+
+Fichiers :
+
+- `src/lib/production-plan.ts`
+- `src/lib/production-plan.test.ts`
+- `src/lib/production-plan.business.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut avant :
+
+- `ProductionUnit`, `WorkUnit`, `WorkUnitDiagnostic`, `SchedulerExecutionPlan` et `BatchBuilderPlan` existaient comme briques séparées ;
+- aucune vue unique n'assemblait encore ces projections ;
+- les postes KDS ne consommaient pas encore la nouvelle architecture cible.
+
+Statut après :
+
+- `buildProductionPlan()` orchestre la chaîne complète en mémoire depuis les commandes legacy ;
+- `assembleProductionPlan()` assemble des artefacts déjà produits afin de tester des plans volontairement incohérents sans dupliquer les règles métier ;
+- le plan expose un identifiant déterministe, les Production Units, les Work Units, le diagnostic, le Scheduler, les Batchs, des compteurs globaux, des vues par poste, des anomalies bloquantes et `isUsable` ;
+- aucune table Supabase, aucun poste KDS, aucune interface, aucun Dispatcher, aucune persistance et aucune écriture ne sont introduits.
+
+Règles réellement implémentées :
+
+- le `ProductionPlan` orchestre les modules existants, sans réimplémenter le mapping des statuts, les dépendances, le tri Scheduler ou la constitution des Batchs ;
+- `isUsable` vaut `false` si le diagnostic WorkUnit remonte une anomalie ou si `batchPlan.batchedWorkUnitIds` ne conserve pas exactement l'ordre global `schedulerPlan.scheduledWorkUnitIds` ;
+- les vues par poste exposent les Work Units planifiées et les Batchs par station, dans l'ordre de postes stable ;
+- les compteurs couvrent les Production Units, Work Units, Work Units planifiées, Batchs, types de produits, statuts et types de Batchs ;
+- les sorties sont copiées afin qu'une mutation du plan retourné ne modifie pas les entrées.
+
+Tests :
+
+- commande pizza simple ;
+- commande mixte pizza + Pani'NO ;
+- Fish & NO ;
+- plusieurs commandes ;
+- aucune Work Unit planifiée perdue ou dupliquée ;
+- diagnostic incohérent ;
+- dépendance manquante ;
+- produit `other` sans workflow ;
+- ordre Scheduler conservé dans `batchedWorkUnitIds` ;
+- Batchs présents ;
+- vues par poste cohérentes ;
+- même entrée -> même sortie ;
+- absence de mutation des commandes, Production Units et Work Units d'entrée.
+
+Limites confirmées :
+
+- le plan n'est pas persistant ;
+- il n'est consommé par aucun poste ;
+- il ne calcule pas encore de capacité avancée, d'heure de démarrage ou de priorité manuelle ;
+- il ne remplace pas encore les moteurs legacy.
+
+Validation locale :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/production-plan.ts src/lib/production-plan.test.ts src/lib/production-plan.business.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API ;
+- `git diff --check` : réussi.
+
+---
+
+## 2026-08-03 - Validation métier du ProductionPlan en mémoire
+
+Date : 2026-08-03
+Branche : `refactor/production-plan`
+
+Fichiers :
+
+- `src/lib/production-plan.business.test.ts`
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Statut après validation :
+
+- le contrat public de `buildProductionPlan()` n'a pas été sophistiqué ;
+- aucune correction moteur n'a été nécessaire pendant cette passe ;
+- la validation ajoute des scénarios métier réalistes construits à partir des commandes legacy et de la chaîne complète en mémoire ;
+- `assembleProductionPlan()` reste utilisé uniquement pour construire des incohérences contrôlées en test.
+
+Scénarios validés :
+
+- commande pizza simple de quatre pizzas prêtes à enfourner : quatre Production Units, Work Units attendues, une fournée complète de quatre et plan exploitable ;
+- deux commandes partageant une même fournée : deux Regina + deux Margherita, ordre global Scheduler conservé ;
+- commande supérieure à quatre pizzas : six pizzas réparties en 4 + 2 sans perte ni duplication ;
+- scénario documenté : deux Regina, deux Margherita, deux Fromages, une Chèvre miel et une Piccante réparties en deux fournées de quatre ;
+- commande mixte pizza + Pani'NO + Fish & NO + cornet de frites ;
+- pizzas sans post-cuisson et avec post-cuisson ;
+- commande annulée ;
+- commande prête ou livrée ;
+- produit inconnu `other` ;
+- dépendance manquante ;
+- divergence Scheduler / Batch Builder.
+
+Invariants validés :
+
+- aucune Work Unit dupliquée dans les plans exploitables ;
+- chaque dépendance pointe vers une Work Unit existante ;
+- aucune tâche dépendante n'est planifiée tant que sa dépendance n'est pas `completed` ;
+- chaque Work Unit planifiée se retrouve exactement une fois dans les batchs actifs ;
+- aucune pizza n'est présente dans plusieurs fournées ;
+- la capacité des batchs `pizza_oven` reste limitée à quatre pizzas ;
+- `batchedWorkUnitIds` conserve l'ordre global du Scheduler ;
+- les commandes `cancelled`, `ready` et `delivered` ne créent aucune charge active ;
+- les vues par poste ne contiennent que des Work Units ou Batchs de leur propre poste ;
+- les entrées legacy ne sont pas mutées ;
+- deux exécutions avec les mêmes entrées produisent le même identifiant et le même contenu métier.
+
+Anomalies bloquantes explicitement validées :
+
+- produit inconnu sans workflow ;
+- dépendance WorkUnit manquante ;
+- diagnostic WorkUnit incohérent ;
+- ordre Scheduler / BatchPlan divergent.
+
+Limitations confirmées non bloquantes :
+
+- les durées estimées des Work Units restent `null` ;
+- la différence entre post-cuisson courte et longue n'est pas encore portée par un profil de durée, seulement par la présence d'une Work Unit `pizza.finishing` ;
+- les batchs autres que `pizza_oven` restent unitaires ;
+- aucun calcul de démarrage, de ressource physique, de priorité manuelle ou de Dispatcher n'est encore présent ;
+- aucune donnée Supabase réelle n'a encore été comparée au plan.
+
+Validation locale :
+
+- `npm test` : réussi ;
+- `npx eslint src/lib/production-plan.ts src/lib/production-plan.test.ts src/lib/production-plan.business.test.ts` : réussi ;
+- `npm run build` : réussi avec avertissements existants de build/deprecated API ;
+- `git diff --check` : réussi.
+
+---
+
+## 2026-08-03 - Comparaison silencieuse ProductionPlan / snapshot legacy
+
+Date : 2026-08-03
+Branche : `refactor/production-plan-shadow-validation`
+
+Fichiers créés :
+
+- `src/lib/production-plan-shadow-validation.ts`
+- `src/lib/production-plan-shadow-validation.test.ts`
+- `src/lib/fixtures/production-plan/service-shadow-snapshot.json`
+
+Fichiers modifiés :
+
+- `package.json`
+- `docs/13_ETAT_DU_PROJET.md`
+
+Objectif :
+
+- exécuter le `ProductionPlan` sur un snapshot exporté ou déjà récupéré par le KDS ;
+- comparer silencieusement les résultats projetés avec les compteurs et états legacy ;
+- conserver cette comparaison hors interface de production ;
+- ne déclencher aucune écriture Supabase, aucun changement d'état et aucune persistance.
+
+Statut après :
+
+- `ProductionPlanSnapshot` définit un format d'export explicite, en lecture seule ;
+- `compareProductionPlanWithLegacy(snapshot)` construit le plan et retourne un rapport structuré ;
+- `anonymizeProductionPlanSnapshot(snapshot)` produit un snapshot anonymisé déterministe ;
+- une fixture JSON synthétique et anonymisée représente un petit service mixte ;
+- aucun poste KDS ne consomme ce diagnostic ;
+- aucun script Supabase, aucune clé et aucune connexion réseau ne sont introduits.
+
+Contrat du snapshot :
+
+- `snapshotId` : identifiant local du snapshot ;
+- `capturedAt` : horodatage de capture ou `null` ;
+- `source` : `kds_runtime`, `json_export` ou `fixture` ;
+- `orders` : commandes nécessaires au lien client/horaire/statut ;
+- `orderItems` : pizzas physiques issues de `order_items` ;
+- `paninoItems` : produits physiques issus de `panino_order_items` ;
+- `legacy` : compteurs legacy optionnels permettant de comparer un état observé avec le plan.
+
+Champs Supabase nécessaires :
+
+| Table | Champ | Utilisation | Obligatoire | Valeur legacy possible | Absence |
+| --- | --- | --- | --- | --- | --- |
+| `orders` | `id` | Relier les produits à la commande. | Oui | Toujours présent. | Les articles liés deviennent incohérents. |
+| `orders` | `customer_name` | Contexte de diagnostic, anonymisable. | Non | Nom absent ou anonymisé. | `customerName = null`. |
+| `orders` | `requested_time` | Tri Scheduler et comparaison horaire. | Non | Anciennes commandes sans heure. | Tâches classées après les tâches datées. |
+| `orders` | `status` | Fallback `ready`, `delivered`, `cancelled`. | Non | Statut absent ou historique. | Statut individuel puis `created`. |
+| `orders` | `cancelled_at` | Annulation même si `status` est incomplet. | Non | `null` hors annulation. | Seul `orders.status` peut annuler. |
+| `orders` | `pains_panino_status` / `panino_bread_status` | État global pain Pani'NO legacy. | Non | Présent sur certains exports. | Aucun cas `unsupported` ajouté. |
+| `order_items` | `id` | Identifiant source de la pizza physique. | Oui | Toujours présent. | Identifiant ProductionUnit impossible. |
+| `order_items` | `order_id` | Lien commande/horaire. | Oui | Peut pointer vers une commande absente d'un export incomplet. | Différence bloquante `source_item_missing_order`. |
+| `order_items` | `pizza_name` | Nom produit et post-cuisson. | Oui | Nom catalogue historique. | Produit non explicable. |
+| `order_items` | `pizza_id` | Lien catalogue optionnel. | Non | `null` sur anciennes commandes. | `pizzaId = null`. |
+| `order_items` | `base`, `default_base_snapshot`, `explicit_base_snapshot` | Base réelle et audit des remplacements. | Non | Absents avant migration base. | Champs base à `null`. |
+| `order_items` | `extras`, `removed` | Suppléments et retraits. | Non | Tableaux absents ou vides. | Listes vides. |
+| `order_items` | `prepared` | Statut legacy prudent d'une pizza prête pour le four. | Non | Boolean ambigu. | Pas de `legacy_prepared`. |
+| `order_items` | `production_status` | Statut pizza individuel. | Non | Absent sur anciennes commandes. | Fallback commande puis `prepared` puis `created`. |
+| `order_items` | `ready_at` | Diagnostic temporel ready/non-ready. | Non | `null` hors prêt. | Un statut `ready` sans `ready_at` produit un warning. |
+| `panino_order_items` | `id` | Identifiant source du produit physique. | Oui | Toujours présent. | Identifiant ProductionUnit impossible. |
+| `panino_order_items` | `order_id` | Lien commande/horaire. | Oui | Peut pointer vers une commande absente. | Différence bloquante `source_item_missing_order`. |
+| `panino_order_items` | `product_key` | Classement `panino`, `fish_no`, `fries`, `grenailles`, `other`. | Oui | Alias `fishno`, `fish_no`, `frites`, `fries`. | Produit `other`, sans workflow. |
+| `panino_order_items` | `product_name` | Libellé de diagnostic. | Oui | Nom libre historique. | Produit peu explicable. |
+| `panino_order_items` | `base`, `fries_mode`, `side` | Pain Pani'NO et accompagnement Fish & NO. | Non | `null` ou libellé historique. | Workflow conservé, profil moins précis. |
+| `panino_order_items` | `sauces`, `extras`, `removed` | Modifications de préparation. | Non | Tableaux absents ou vides. | Listes vides. |
+| `panino_order_items` | `status` | Statut individuel Pani'NO/Fish/frites. | Non | `pending`, `in_progress`, `done` ou absent. | Fallback commande puis `created`. |
+| `panino_order_items` | `done_at` | Diagnostic temporel done/non-done. | Non | `null` hors terminé. | Un statut `done` sans `done_at` produit un warning. |
+
+Comparaisons implémentées :
+
+- nombre de commandes ;
+- nombre de produits physiques ;
+- nombre de pizzas ;
+- nombre de Pani'NO ;
+- nombre de Fish & NO ;
+- nombre de frites ;
+- nombre de grenailles ;
+- produits prêts ;
+- produits en cours ;
+- produits annulés ;
+- charge active par poste lorsque des compteurs legacy sont fournis ;
+- pizzas actuellement préparables ;
+- pizzas prêtes à enfourner ;
+- produits sans workflow ;
+- commandes mixtes ;
+- Work Units avec dépendance invalide ;
+- divergences de statut entre commande et article ;
+- anomalies issues du diagnostic ProductionUnit ;
+- anomalies bloquantes issues du ProductionPlan.
+
+Classification des écarts :
+
+- `match` : les compteurs source/legacy et plan sont cohérents ;
+- `warning` : donnée legacy ambiguë ou incomplète, divergence prudente, commande sans produit ;
+- `blocking_difference` : produit réel absent ou incohérent, identifiant dupliqué, article sans commande, plan inexploitable ;
+- `unsupported` : donnée connue mais non modélisée dans cette passe, par exemple état global du pain Pani'NO ou quantité agrégée.
+
+Scénarios testés :
+
+- snapshot vide ;
+- commande pizza simple ;
+- commande de 4 pizzas ;
+- commande de plus de 4 pizzas ;
+- commande mixte pizza + Pani'NO ;
+- commande annulée ;
+- commande prête ;
+- commande livrée ;
+- Pani'NO avec état global pain ambigu ;
+- Fish & NO avec accompagnement ;
+- produit inconnu ;
+- donnée legacy incomplète ;
+- commande sans produit ;
+- article sans commande ;
+- divergence entre statut de commande et statut d'article ;
+- anonymisation déterministe ;
+- même snapshot -> même rapport ;
+- absence de mutation des données d'entrée ;
+- fixture JSON anonymisée représentative d'un petit service.
+
+Limites confirmées :
+
+- aucune donnée client réelle n'a été utilisée dans les tests ;
+- la fixture JSON est synthétique, lisible et anonymisée ;
+- la charge source par poste n'est comparée au legacy que si le snapshot fournit des compteurs legacy ;
+- l'état détaillé du pain Pani'NO reste `unsupported` ;
+- les quantités agrégées restent `unsupported` car chaque ligne actuelle doit représenter un produit physique ;
+- aucun export Supabase réel n'est encore généré automatiquement ;
+- aucun poste KDS ne consomme encore le rapport.
+
+Validation locale :
+
+- `npx jiti src/lib/production-plan-shadow-validation.test.ts` : réussi ;
+- `npx eslint src/lib/production-plan-shadow-validation.ts src/lib/production-plan-shadow-validation.test.ts` : réussi ;
+- validations complètes à relancer en fin de branche.
+
+Prochaine étape recommandée :
+
+```text
+Exécuter compareProductionPlanWithLegacy() sur un export Supabase réel anonymisé, puis analyser les warnings avant tout branchement sur un poste.
+```
 
 ---
 
@@ -3059,11 +3344,45 @@ Validation :
 - les autres postes restent unitaires ;
 - aucune Work Unit planifiée n'est perdue ou dupliquée.
 
+### Étape 3quater - ProductionPlan consolidé en mémoire
+
+Objectif :
+
+- assembler les projections existantes dans une vue unique de production projetée, sans Dispatcher et sans persistance.
+
+Statut au 2026-08-03 :
+
+- implémenté dans `src/lib/production-plan.ts` ;
+- testé dans `src/lib/production-plan.test.ts` et `src/lib/production-plan.business.test.ts` ;
+- non consommé par les postes ;
+- non persisté en base ;
+- sans Dispatcher.
+
+Contraintes :
+
+- chaîne orchestrée : `buildProductionUnits()` -> `buildWorkUnits()` -> `diagnoseWorkUnits()` -> `buildSchedulerPlan()` -> `buildBatchPlan()` ;
+- aucune duplication des règles déjà présentes dans les briques existantes ;
+- `isUsable` dépend des anomalies bloquantes issues du diagnostic et de la cohérence Scheduler/BatchPlan ;
+- vues par poste calculées depuis le Scheduler et les Batchs ;
+- aucune mutation des entrées.
+
+Validation :
+
+- commandes pizza, mixte pizza + Pani'NO, Fish & NO et multi-commandes ;
+- produit `other` sans workflow ;
+- dépendance manquante ;
+- diagnostic incohérent ;
+- ordre Scheduler conservé ;
+- Batchs présents ;
+- vues par poste cohérentes ;
+- même entrée -> même sortie ;
+- absence de mutation des entrées.
+
 ### Étape 4 - Premier lecteur Pizzaiolo, sans changement visuel majeur
 
 Objectif :
 
-- migrer seulement la lecture du poste Pizzaiolo vers une projection issue des unités, après validation des diagnostics.
+- migrer seulement la lecture du poste Pizzaiolo vers une projection issue du `ProductionPlan`, après validation terrain en lecture seule.
 
 Contraintes :
 
@@ -3131,9 +3450,9 @@ Cette étape nécessite une migration Supabase et ne fait pas partie de la proch
 ## 28.9 Prochaine branche recommandée
 
 ```text
-refactor/production-units-adapter
+refactor/production-plan-shadow-validation
 ```
 
 Objectif unique :
 
-- produire une représentation `ProductionUnit[]` en mémoire, testée, sans migration, sans écran modifié, sans Scheduler.
+- comparer le `ProductionPlan` en mémoire avec des données réelles/exportées anonymisées, sans migration, sans écran modifié et sans Dispatcher.

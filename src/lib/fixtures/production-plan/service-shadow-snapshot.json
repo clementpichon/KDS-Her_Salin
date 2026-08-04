@@ -1,0 +1,88 @@
+{
+  "snapshotId": "fixture-service-001",
+  "capturedAt": "2026-08-03T19:30:00.000Z",
+  "source": "fixture",
+  "orders": [
+    {
+      "id": "order-001",
+      "customer_name": "Client 001",
+      "requested_time": "2026-08-03T19:45:00.000Z",
+      "status": "to_prepare",
+      "cancelled_at": null
+    },
+    {
+      "id": "order-002",
+      "customer_name": "Client 002",
+      "requested_time": "2026-08-03T20:00:00.000Z",
+      "status": "to_prepare",
+      "cancelled_at": null
+    }
+  ],
+  "orderItems": [
+    {
+      "id": "pizza-item-001",
+      "order_id": "order-001",
+      "pizza_id": "regina",
+      "pizza_name": "Regina",
+      "base": "tomato",
+      "extras": [],
+      "removed": [],
+      "prepared": true,
+      "production_status": null,
+      "ready_at": null
+    },
+    {
+      "id": "pizza-item-002",
+      "order_id": "order-001",
+      "pizza_id": "margherita",
+      "pizza_name": "Margherita",
+      "base": "tomato",
+      "extras": [],
+      "removed": [],
+      "prepared": true,
+      "production_status": null,
+      "ready_at": null
+    }
+  ],
+  "paninoItems": [
+    {
+      "id": "panino-item-001",
+      "order_id": "order-002",
+      "product_key": "panino",
+      "product_name": "Pani'NO Burger",
+      "base": "creme",
+      "fries_mode": null,
+      "side": null,
+      "sauces": [],
+      "removed": [],
+      "extras": [],
+      "status": "pending",
+      "done_at": null
+    },
+    {
+      "id": "fish-item-001",
+      "order_id": "order-002",
+      "product_key": "fishno",
+      "product_name": "Fish & NO",
+      "base": null,
+      "fries_mode": null,
+      "side": "Frites",
+      "sauces": [],
+      "removed": [],
+      "extras": [],
+      "status": "pending",
+      "done_at": null
+    }
+  ],
+  "legacy": {
+    "counts": {
+      "orders": 2,
+      "physicalProducts": 4,
+      "pizzas": 2,
+      "paninos": 1,
+      "fishNo": 1,
+      "fries": 0,
+      "grenailles": 0
+    }
+  }
+}
