@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-05 - Shadow Production silencieux
+> Dernière mise à jour : 2026-08-05 - ViewModel Pizzaiolo ProductionPlan
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -3944,3 +3944,148 @@ Objectif unique :
 - plusieurs bases ;
 - une pizza avec post-cuisson ;
 - un produit Pani'NO ou Fish & NO dès que des données existent.
+
+---
+
+# 30. ViewModel Pizzaiolo issu du ProductionPlan
+
+## 30.1 Statut au 2026-08-05
+
+Branche : `feature/production-plan-view-model`
+
+Objectif :
+
+- préparer le remplacement futur du poste Pizzaiolo sans modifier l'interface actuelle ;
+- exposer une projection simple du `ProductionPlan`, consommable plus tard par une interface ;
+- conserver le KDS existant comme seule source opérationnelle visible pour les postes.
+
+Statut :
+
+- implémenté en mémoire dans `src/lib/view-models/pizzaiolo-view-model.ts` ;
+- testé dans `src/lib/view-models/pizzaiolo-view-model.test.ts` ;
+- non branché à React ;
+- non utilisé par les postes ;
+- sans requête Supabase, sans migration, sans Dispatcher et sans persistance.
+
+## 30.2 Rôle du ViewModel
+
+Le ViewModel transforme uniquement un `ProductionPlan` déjà calculé.
+
+Il ne reconstruit pas :
+
+- les `ProductionUnit` ;
+- les `WorkUnit` ;
+- le Scheduler ;
+- les batchs ;
+- les diagnostics.
+
+Il ne prend pas de décision métier.
+Il expose seulement les données déjà validées sous une forme plus facile à consommer par une future interface Pizzaiolo.
+
+API actuelle :
+
+- `buildPizzaioloViewModel(plan)` ;
+- `availableWorkUnits` : tâches Pizzaiolo planifiables dans l'ordre du Scheduler ;
+- `pizzasReadyToPrepare` : sous-ensemble des pizzas dont la préparation Pizzaiolo est disponible ;
+- `groupedOrders` : regroupement par commande des tâches Pizzaiolo et des produits physiques associés ;
+- `blockedWorkUnits` : tâches Pizzaiolo bloquées avec dépendances visibles ;
+- `completedDependencies` : dépendances déjà terminées, utiles pour afficher les déblocages futurs ;
+- `selection` : données préparant la sélection unitaire, multi-commandes et "tout sélectionner" ;
+- `recommendations` : indication strictement descriptive de suivre l'ordre Scheduler ;
+- `diagnostics` : résumé texte des anomalies bloquantes du `ProductionPlan`.
+
+Données pizza déjà exposées par le ViewModel :
+
+- identifiant `ProductionUnit` ;
+- identifiant source de l'article ;
+- heure demandée ;
+- nom client ;
+- base réelle si connue ;
+- suppléments ;
+- retraits ;
+- découpe.
+
+## 30.3 Séparation moteur / interface
+
+Garantie de séparation :
+
+- aucun composant React modifié ;
+- aucun hook de chargement modifié ;
+- aucune route KDS modifiée ;
+- aucun comportement Pizzaiolo legacy remplacé ;
+- aucune logique d'ordre manuel ajoutée ;
+- aucune action de sélection ou d'envoi au four implémentée.
+
+Le ViewModel prépare seulement les futures vues :
+
+- plan de travail Pizzaiolo ;
+- regroupement par commande ;
+- sélection d'une commande complète ;
+- sélection de plusieurs commandes ;
+- bouton "Tout sélectionner" ;
+- futurs écrans de supervision.
+
+Le contrat de sélection est volontairement strict :
+
+- `selectableWorkUnitIds` est dérivé uniquement des Work Units Pizzaiolo réellement planifiées par le Scheduler ;
+- `selectableOrderIds` est dérivé des mêmes Work Units et respecte leur ordre Scheduler ;
+- une Work Unit absente du Scheduler n'est jamais sélectionnable, même si son statut brut vaut `available` ;
+- un `ProductionPlan` non exploitable ne produit aucune sélection ;
+- `hasSelectableWorkUnits` indique seulement qu'au moins une Work Unit peut être sélectionnée, sans décider si l'interface doit afficher ou non un bouton "Tout sélectionner".
+
+Périmètre des groupes :
+
+- `workUnitIds`, `availableWorkUnitIds`, `blockedWorkUnitIds` et `completedWorkUnitIds` ne contiennent que des Work Units du poste Pizzaiolo ;
+- les Work Units Four, Pani'NO, friteuse poisson, friteuse frites et remise ne sont pas incluses dans ces listes ;
+- `productKinds` et `productNames` représentent en revanche toute la commande afin de conserver le contexte des commandes mixtes.
+
+## 30.4 Garanties d'immutabilité
+
+Le module est pur et déterministe :
+
+- il reçoit un `ProductionPlan` ;
+- il retourne un objet de présentation ;
+- il ne modifie pas le plan d'entrée ;
+- il clone les tableaux exposés ;
+- deux appels avec le même plan produisent le même résultat.
+
+Cette garantie permet de comparer plus tard le poste Pizzaiolo legacy et le futur poste basé sur `ProductionPlan` sans perturber le service.
+
+## 30.5 Tests ajoutés
+
+Fichier :
+
+- `src/lib/view-models/pizzaiolo-view-model.test.ts`
+
+Cas couverts :
+
+- `ProductionPlan` vide ;
+- pizza simple disponible au poste Pizzaiolo ;
+- regroupement d'une commande mixte pizza + Pani'NO ;
+- dépendance bloquée et diagnostic associé ;
+- Work Unit `available` mais non planifiée, donc non sélectionnable ;
+- plan non exploitable avec sélection vide ;
+- commande sans Work Unit Pizzaiolo planifiée, donc non sélectionnable ;
+- ordre de `selectableOrderIds` conforme au Scheduler ;
+- exclusion des Work Units hors poste Pizzaiolo dans les groupes ;
+- commande livrée avec tâche Pizzaiolo terminée ;
+- ordre déterministe des groupes ;
+- même entrée -> même sortie ;
+- absence de mutation du `ProductionPlan`.
+
+## 30.6 Limitations restantes
+
+- Le ViewModel ne pilote encore aucune interface.
+- La recommandation actuelle expose seulement l'ordre Scheduler, sans arbitrage métier supplémentaire.
+- Les actions futures de sélection, réservation, déplacement ou envoi au four ne sont pas implémentées.
+- Les données Pani'NO/Fish & NO dépendront toujours de la couverture runtime réelle du `ProductionPlan`.
+- Aucun comparateur silencieux avec le poste Pizzaiolo legacy n'existe encore.
+- Les futurs emplacements des quatre disques de préparation ne sont pas encore représentés.
+- Aucun état de sélection utilisateur, de réservation opérateur ou de verrouillage tactile n'existe encore.
+- Les regroupements métier par base, par fournée ou par stratégie de fatigue ne sont pas exposés par ce ViewModel.
+
+## 30.7 Prochaine étape recommandée
+
+Objectif unique :
+
+- valider ce ViewModel sur des snapshots `ProductionPlan` plus riches, puis créer une comparaison silencieuse avec les données actuellement affichées par le poste Pizzaiolo legacy, sans brancher l'interface.
