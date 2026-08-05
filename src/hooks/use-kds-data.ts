@@ -1,6 +1,22 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { Order, OrderItem, Pizza, Settings, Ingredient, PaninoProduct, PaninoOption, PaninoOrderItem, ProductionEvent, PhoneStatus } from "@/lib/kds-types";
+import type {
+  Order,
+  OrderItem,
+  Pizza,
+  Settings,
+  Ingredient,
+  PaninoProduct,
+  PaninoOption,
+  PaninoOrderItem,
+  ProductionEvent,
+  PhoneStatus,
+} from "@/lib/kds-types";
+import {
+  isShadowProductionDebugEnabled,
+  scheduleShadowProductionRun,
+  shouldRunShadowProductionAfterReload,
+} from "@/lib/shadow-production";
 
 const DEFAULT_SETTINGS: Settings = {
   id: 1,
@@ -40,11 +56,7 @@ export function useSettings() {
     let mounted = true;
 
     const load = async () => {
-      const { data, error } = await supabase
-        .from("settings")
-        .select("*")
-        .eq("id", 1)
-        .maybeSingle();
+      const { data, error } = await supabase.from("settings").select("*").eq("id", 1).maybeSingle();
 
       if (!mounted) return;
 
@@ -56,22 +68,16 @@ export function useSettings() {
       setSettings(DEFAULT_SETTINGS);
       if (error) console.error("[KDS] Chargement des réglages impossible", error);
 
-      await supabase
-        .from("settings")
-        .upsert(DEFAULT_SETTINGS, { onConflict: "id" });
+      await supabase.from("settings").upsert(DEFAULT_SETTINGS, { onConflict: "id" });
     };
 
     load();
 
     const channel = supabase
       .channel(uniqueChannelName("settings-changes"))
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "settings" },
-        (payload) => {
-          if (payload.new) setSettings({ ...DEFAULT_SETTINGS, ...(payload.new as Settings) });
-        },
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, (payload) => {
+        if (payload.new) setSettings({ ...DEFAULT_SETTINGS, ...(payload.new as Settings) });
+      })
       .subscribe();
     return () => {
       mounted = false;
@@ -86,32 +92,50 @@ export function useOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
 
   const reload = async () => {
-    const { data: ordersData } = await supabase
+    const { data: ordersData, error: ordersError } = await supabase
       .from("orders")
       .select("*")
       .order("requested_time", { ascending: true });
-    const { data: itemsData } = await supabase.from("order_items").select("*");
+    const { data: itemsData, error: itemsError } = await supabase.from("order_items").select("*");
     const items = (itemsData as OrderItem[]) ?? [];
     const ordersWithItems: Order[] = ((ordersData as Order[]) ?? []).map((o) => ({
       ...o,
       items: items.filter((i) => i.order_id === o.id),
     }));
     setOrders(ordersWithItems);
+    if (
+      !shouldRunShadowProductionAfterReload({
+        ordersError,
+        orderItemsError: itemsError,
+      })
+    ) {
+      console.warn("[KDS] Shadow Production ignore: chargement orders incomplet", {
+        ordersError,
+        itemsError,
+      });
+      return;
+    }
+
+    scheduleShadowProductionRun({
+      idSeed: "kds-runtime",
+      orders: ordersWithItems,
+      paninoItems: [],
+      coverage: {
+        orders: true,
+        orderItems: true,
+        paninoItems: false,
+      },
+      debug: isShadowProductionDebugEnabled(),
+    });
   };
 
   useEffect(() => {
     reload();
     const channel = supabase
       .channel(uniqueChannelName("orders-realtime"))
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        () => reload(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "order_items" },
-        () => reload(),
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => reload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () =>
+        reload(),
       )
       .subscribe();
     return () => {
@@ -138,10 +162,8 @@ export function useIngredients() {
     reload();
     const channel = supabase
       .channel(uniqueChannelName("ingredients-changes"))
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ingredients" },
-        () => reload(),
+      .on("postgres_changes", { event: "*", schema: "public", table: "ingredients" }, () =>
+        reload(),
       )
       .subscribe();
     return () => {
@@ -169,10 +191,16 @@ export function usePaninoCatalog() {
     reload();
     const ch = supabase
       .channel(uniqueChannelName("panino-catalog"))
-      .on("postgres_changes", { event: "*", schema: "public", table: "panino_products" }, () => reload())
-      .on("postgres_changes", { event: "*", schema: "public", table: "panino_options" }, () => reload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "panino_products" }, () =>
+        reload(),
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "panino_options" }, () =>
+        reload(),
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, []);
 
   return { products, options, reload };
@@ -193,9 +221,13 @@ export function usePaninoOrderItems() {
     reload();
     const ch = supabase
       .channel(uniqueChannelName("panino-items"))
-      .on("postgres_changes", { event: "*", schema: "public", table: "panino_order_items" }, () => reload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "panino_order_items" }, () =>
+        reload(),
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, []);
 
   return { items, reload };
@@ -217,7 +249,9 @@ export function useProductionEvents(limit = 200) {
     reload();
     const channel = supabase
       .channel(uniqueChannelName("production-events"))
-      .on("postgres_changes", { event: "*", schema: "public", table: "production_events" }, () => reload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "production_events" }, () =>
+        reload(),
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -248,7 +282,9 @@ export function usePhoneStatus() {
     reload();
     const channel = supabase
       .channel(uniqueChannelName("phone-status"))
-      .on("postgres_changes", { event: "*", schema: "public", table: "phone_status" }, () => reload())
+      .on("postgres_changes", { event: "*", schema: "public", table: "phone_status" }, () =>
+        reload(),
+      )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);

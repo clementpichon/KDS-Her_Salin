@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-04 - première validation terrain ProductionPlan
+> Dernière mise à jour : 2026-08-05 - Shadow Production silencieux
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -3774,3 +3774,173 @@ refactor/production-plan-shadow-validation
 Objectif unique :
 
 - comparer le `ProductionPlan` en mémoire avec des données réelles/exportées anonymisées, sans migration, sans écran modifié et sans Dispatcher.
+
+---
+
+# 29. Shadow Production silencieux
+
+## 29.1 Statut au 2026-08-05
+
+Branche : `feature/shadow-production`
+
+Objectif :
+
+- exécuter le `ProductionPlan` en continu en parallèle du KDS existant ;
+- observer uniquement les résultats en mémoire ;
+- ne modifier aucun comportement opérateur.
+
+Statut :
+
+- implémenté en mémoire dans `src/lib/shadow-production.ts` ;
+- testé dans `src/lib/shadow-production.test.ts` ;
+- déclenché discrètement après le rechargement normal des commandes dans `src/hooks/use-kds-data.ts` ;
+- non branché aux postes comme source de décision ;
+- non visible dans l'interface.
+
+## 29.2 Architecture retenue
+
+Le runner Shadow Production orchestre les briques déjà validées :
+
+```text
+orders deja chargees par le KDS
+-> buildProductionUnits()
+-> buildWorkUnits()
+-> diagnoseWorkUnits()
+-> buildSchedulerPlan()
+-> buildBatchPlan()
+-> assembleProductionPlan()
+-> ShadowProductionReport en memoire
+```
+
+Le module ne réimplémente pas les règles métier du `ProductionPlan`.
+Il mesure uniquement les phases et transforme le résultat en rapport observable.
+
+Rapport produit :
+
+- date de démarrage ;
+- durée totale ;
+- temps `ProductionUnits`, `WorkUnits`, diagnostic, Scheduler, BatchBuilder et assemblage ;
+- exploitabilité du plan ;
+- nombre de commandes ;
+- nombre de `ProductionUnits` ;
+- nombre de `WorkUnits` ;
+- nombre de batchs ;
+- couverture des donnees (`orders`, `orderItems`, `paninoItems`) ;
+- statut de performance `ok` ou `slow` ;
+- nombre de warnings non bloquants ;
+- nombre d'anomalies bloquantes ;
+- diagnostics texte non bloquants et bloquants ;
+- dernier rapport conservé uniquement en mémoire du navigateur.
+
+Seuil de performance :
+
+- constante : `SHADOW_PRODUCTION_SLOW_THRESHOLD_MS = 100` ;
+- un dépassement produit le warning non bloquant `shadow_production_slow` ;
+- ce warning ne rend pas le plan inutilisable et ne bloque jamais le KDS.
+
+## 29.3 Point d'intégration
+
+Point actuel :
+
+- `src/hooks/use-kds-data.ts`, dans `useOrders()`, juste après `setOrders(ordersWithItems)`.
+
+Raison :
+
+- c'est l'endroit où le KDS recharge déjà `orders` et `order_items` ;
+- aucune requête Supabase supplémentaire n'est ajoutée ;
+- aucune valeur du rapport n'est retournée aux composants ;
+- les écrans continuent à consommer exclusivement `orders` comme avant.
+
+Limitation volontaire :
+
+- `useOrders()` ne charge pas `panino_order_items` ;
+- le branchement actuel passe donc `paninoItems: []` avec `coverage.paninoItems = false` pour ne pas modifier le comportement réseau ;
+- le rapport ajoute le warning non bloquant `panino_items_not_included` ;
+- ce warning ne rend pas le plan inutilisable ;
+- les produits Pani'NO, Fish & NO, frites et grenailles devront être observés dans une passe ultérieure à partir des données déjà chargées par leur hook dédié ou via un collecteur unifié explicitement validé.
+
+Déclenchements rapprochés :
+
+- `scheduleShadowProductionRun()` coalesce les executions programmees ;
+- si plusieurs reloads Realtime arrivent avant l'execution differee, seul le dernier snapshot est calcule ;
+- la mise a jour React normale via `setOrders()` n'est pas retardee.
+
+Limite thread principal :
+
+- le calcul est differé avec `queueMicrotask` ou `setTimeout(0)` selon l'environnement ;
+- il n'est pas parallelise ;
+- il reste execute sur le thread principal du navigateur ;
+- un Web Worker ne doit etre envisage que si les mesures terrain montrent un cout CPU significatif.
+
+## 29.4 Garanties de sécurité
+
+Garanties confirmées par conception :
+
+- aucune écriture Supabase ;
+- aucune migration ;
+- aucune modification visible de l'interface ;
+- aucun Dispatcher ;
+- aucune persistance du `ProductionPlan` ;
+- aucun remplacement des calculs legacy ;
+- aucune décision métier prise depuis le nouveau moteur ;
+- aucune donnée `.local` utilisée ou commitée ;
+- aucune nouvelle requête Supabase dédiée au Shadow Production ;
+- les erreurs du `ProductionPlan` sont capturées et transformées en rapport d'échec ;
+- une erreur Shadow Production ne doit jamais interrompre le KDS.
+- en cas d'erreur Supabase pendant le chargement `orders` ou `order_items`, le comportement legacy est conserve autant que possible, mais le Shadow Production n'est pas lance sur des donnees potentiellement incompletes ;
+- l'erreur de chargement est seulement journalisee par un avertissement developpeur non intrusif.
+
+Mode debug :
+
+- désactivé par défaut ;
+- sortie console uniquement ;
+- activable par `window.__KDS_SHADOW_PRODUCTION_DEBUG__ = true`, par `localStorage["kds.shadowProduction.debug"] = "1"` ou par le paramètre `?shadowProductionDebug=1` ;
+- aucun affichage React n'est créé.
+
+## 29.5 Tests ajoutés
+
+Fichier :
+
+- `src/lib/shadow-production.test.ts`
+
+Cas couverts :
+
+- rapport exploitable avec compteurs cohérents ;
+- couverture `paninoItems` absente signalee comme warning non bloquant ;
+- couverture complete sans warning de couverture ;
+- mesure des performances Scheduler et BatchBuilder ;
+- duree normale avec `performanceStatus = ok` ;
+- duree superieure au seuil avec `performanceStatus = slow` et warning non bloquant ;
+- coalescence des executions rapprochees, seul le snapshot le plus recent est publie ;
+- exception capturée sans interruption ;
+- plan inutilisable transformé en rapport cohérent ;
+- separation entre warnings non bloquants et anomalies bloquantes ;
+- même entrée et même horloge -> même rapport ;
+- absence de mutation des données source ;
+- sortie console limitée au mode debug.
+
+## 29.6 Limitations restantes
+
+- Le rapport Shadow Production reste local au navigateur et non historisé.
+- Aucune comparaison automatique avec les vues legacy de production n'est encore faite en continu.
+- Les données Pani'NO/Fish & NO ne sont pas encore injectées dans le déclenchement runtime de `useOrders()`.
+- Aucune métrique de service réel n'est persistée.
+- Les performances sont mesurées côté navigateur, sans agrégation multi-postes.
+- Warning ESLint connu hors chantier : `react-hooks/exhaustive-deps` signale `reload` dans `useProductionEvents()` de `src/hooks/use-kds-data.ts`. Ce warning existait déjà avant le branchement Shadow Production, ne concerne pas `useOrders()` et n'est pas corrigé dans cette branche pour éviter un refactor de hook non lié.
+- Toute utilisation opérationnelle du `ProductionPlan` par les postes doit attendre une observation terrain explicite et documentée.
+
+## 29.7 Prochaine étape recommandée
+
+Objectif unique :
+
+- effectuer une observation Shadow Production sur un second export réel plus riche puis sur un service réel avec mode debug ponctuel, sans brancher les postes.
+
+Échantillon à couvrir :
+
+- une pizza préparée ;
+- une pizza en cuisson ;
+- une commande prête ou livrée ;
+- une commande annulée ;
+- plusieurs bases ;
+- une pizza avec post-cuisson ;
+- un produit Pani'NO ou Fish & NO dès que des données existent.
