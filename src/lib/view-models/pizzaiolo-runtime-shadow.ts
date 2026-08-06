@@ -56,6 +56,7 @@ export interface PizzaioloRuntimeShadowReport {
   warningCount: number;
   blockingDifferenceCount: number;
   unsupportedCount: number;
+  diagnosticCodes: readonly string[];
   performance: PizzaioloRuntimeShadowPerformance;
   error: string | null;
 }
@@ -88,7 +89,10 @@ export interface PizzaioloRuntimeShadowScheduler {
   schedule(params: RunPizzaioloRuntimeShadowComparisonParams): void;
 }
 
+export type PizzaioloRuntimeShadowReportListener = (report: PizzaioloRuntimeShadowReport) => void;
+
 let lastPizzaioloRuntimeShadowReport: PizzaioloRuntimeShadowReport | null = null;
+const pizzaioloRuntimeShadowReportListeners = new Set<PizzaioloRuntimeShadowReportListener>();
 
 const DEFAULT_CLOCK: ShadowProductionClock = {
   nowMs: () =>
@@ -167,6 +171,7 @@ export function runPizzaioloRuntimeShadowComparison(
       ...planWarnings(productionPlan.value),
       ...performanceWarnings(performance.totalMs),
     ];
+    const diagnosticCodes = diagnosticCodesFor({ warnings, comparison: comparison.value });
     const report: PizzaioloRuntimeShadowReport = {
       startedAt,
       durationMs,
@@ -178,6 +183,7 @@ export function runPizzaioloRuntimeShadowComparison(
       warningCount: warnings.length + comparison.value.warnings.length,
       blockingDifferenceCount: comparison.value.blockingDifferences.length,
       unsupportedCount: comparison.value.unsupported.length,
+      diagnosticCodes,
       performance,
       error: null,
     };
@@ -206,6 +212,15 @@ export function schedulePizzaioloRuntimeShadowComparison(
 
 export function shouldSchedulePizzaioloRuntimeShadowComparison(debugEnabled: boolean): boolean {
   return debugEnabled;
+}
+
+export function subscribeToPizzaioloRuntimeShadowReports(
+  listener: PizzaioloRuntimeShadowReportListener,
+): () => void {
+  pizzaioloRuntimeShadowReportListeners.add(listener);
+  return () => {
+    pizzaioloRuntimeShadowReportListeners.delete(listener);
+  };
 }
 
 export function createPizzaioloRuntimeShadowScheduler({
@@ -302,6 +317,7 @@ function skippedReport({
     warningCount: warnings.length,
     blockingDifferenceCount: 0,
     unsupportedCount: 0,
+    diagnosticCodes: diagnosticCodesFromWarningMessages(warnings),
     performance: emptyPerformance(durationMs),
     error: null,
   };
@@ -331,6 +347,10 @@ function failureReport({
     warningCount: warnings.length,
     blockingDifferenceCount: 1,
     unsupportedCount: 0,
+    diagnosticCodes: uniqueValues([
+      ...diagnosticCodesFromWarningMessages(warnings),
+      "pizzaiolo_comparison_failed",
+    ]),
     performance: emptyPerformance(durationMs),
     error: messageFromUnknown(error),
   };
@@ -342,12 +362,19 @@ function publishPizzaioloRuntimeShadowReport(
   comparison: PizzaioloLegacyShadowComparison | null = null,
 ) {
   lastPizzaioloRuntimeShadowReport = cloneReport(report);
+  notifyPizzaioloRuntimeShadowReportListeners(lastPizzaioloRuntimeShadowReport);
 
   if (params.debug) {
     (params.logger ?? console).log(formatPizzaioloRuntimeShadowDebugReport(report, comparison));
   }
 
   return report;
+}
+
+function notifyPizzaioloRuntimeShadowReportListeners(report: PizzaioloRuntimeShadowReport) {
+  for (const listener of pizzaioloRuntimeShadowReportListeners) {
+    listener(cloneReport(report));
+  }
 }
 
 function formatPizzaioloRuntimeShadowDebugReport(
@@ -446,6 +473,25 @@ function messageFromUnknown(error: unknown) {
   return String(error);
 }
 
+function diagnosticCodesFor({
+  warnings,
+  comparison,
+}: {
+  warnings: readonly string[];
+  comparison: PizzaioloLegacyShadowComparison;
+}) {
+  return uniqueValues([
+    ...diagnosticCodesFromWarningMessages(warnings),
+    ...comparison.warnings.map((issue) => issue.code),
+    ...comparison.blockingDifferences.map((issue) => issue.code),
+    ...comparison.unsupported.map((issue) => issue.code),
+  ]);
+}
+
+function diagnosticCodesFromWarningMessages(warnings: readonly string[]) {
+  return warnings.map((warning) => warning.split(":")[0]?.trim()).filter(Boolean);
+}
+
 function cloneSummary(summary: PizzaioloLegacyShadowSummary): PizzaioloLegacyShadowSummary {
   return { ...summary };
 }
@@ -456,6 +502,11 @@ function cloneReport(report: PizzaioloRuntimeShadowReport): PizzaioloRuntimeShad
     coverage: { ...report.coverage },
     summary: report.summary ? { ...report.summary } : null,
     warnings: [...report.warnings],
+    diagnosticCodes: [...report.diagnosticCodes],
     performance: { ...report.performance },
   };
+}
+
+function uniqueValues<T>(values: readonly T[]): T[] {
+  return [...new Set(values)];
 }

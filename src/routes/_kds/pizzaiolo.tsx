@@ -53,9 +53,13 @@ import {
   type PizzaDisplayDetails,
 } from "@/lib/pizza-production";
 import { isShadowProductionDebugEnabled } from "@/lib/shadow-production";
+import { buildPizzaioloShadowDebugPanelView } from "@/lib/view-models/pizzaiolo-shadow-debug-panel";
 import {
+  getLastPizzaioloRuntimeShadowReport,
   schedulePizzaioloRuntimeShadowComparison,
   shouldSchedulePizzaioloRuntimeShadowComparison,
+  subscribeToPizzaioloRuntimeShadowReports,
+  type PizzaioloRuntimeShadowReport,
 } from "@/lib/view-models/pizzaiolo-runtime-shadow";
 import type { Order, OrderItem, Pizza } from "@/lib/kds-types";
 
@@ -105,12 +109,13 @@ function Pizzaiolo() {
     placement: "before" | "after";
   } | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<PizzaioloQueueJob | null>(null);
+  const shadowDebugEnabled = usePizzaioloShadowDebugEnabled();
 
   const paninoByOrder = useMemo(() => buildPaninoItemsByOrder(paninoItems), [paninoItems]);
   const list = useMemo(() => buildPizzaioloQueue(orders, paninoItems), [orders, paninoItems]);
 
   useEffect(() => {
-    if (!shouldSchedulePizzaioloRuntimeShadowComparison(isShadowProductionDebugEnabled())) return;
+    if (!shouldSchedulePizzaioloRuntimeShadowComparison(shadowDebugEnabled)) return;
 
     schedulePizzaioloRuntimeShadowComparison({
       idSeed: "kds-runtime-pizzaiolo",
@@ -125,7 +130,7 @@ function Pizzaiolo() {
       },
       debug: true,
     });
-  }, [orders, paninoItems, pizzas]);
+  }, [orders, paninoItems, pizzas, shadowDebugEnabled]);
 
   const selectedIds = useMemo(
     () => new Set(slots.flatMap((slot) => (slot.item ? [slot.item.id] : []))),
@@ -717,7 +722,97 @@ function Pizzaiolo() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {shadowDebugEnabled && <PizzaioloShadowDebugPanel debugEnabled={shadowDebugEnabled} />}
     </div>
+  );
+}
+
+function usePizzaioloShadowDebugEnabled() {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    setEnabled(isShadowProductionDebugEnabled());
+  }, []);
+
+  return enabled;
+}
+
+function usePizzaioloRuntimeShadowReport(debugEnabled: boolean) {
+  const [report, setReport] = useState<PizzaioloRuntimeShadowReport | null>(() =>
+    debugEnabled ? getLastPizzaioloRuntimeShadowReport() : null,
+  );
+
+  useEffect(() => {
+    if (!debugEnabled) {
+      setReport(null);
+      return;
+    }
+
+    setReport(getLastPizzaioloRuntimeShadowReport());
+    return subscribeToPizzaioloRuntimeShadowReports(setReport);
+  }, [debugEnabled]);
+
+  return report;
+}
+
+function PizzaioloShadowDebugPanel({ debugEnabled }: { debugEnabled: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const report = usePizzaioloRuntimeShadowReport(debugEnabled);
+  const view = buildPizzaioloShadowDebugPanelView({ debugEnabled, report });
+
+  if (!view) return null;
+
+  return (
+    <aside className="fixed bottom-3 right-3 z-50 w-[min(22rem,calc(100vw-1.5rem))] rounded-2xl border border-primary/30 bg-card/95 p-3 text-xs shadow-xl backdrop-blur">
+      <button
+        type="button"
+        onClick={() => setCollapsed((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+        aria-expanded={!collapsed}
+      >
+        <span>
+          <span className="mr-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-black text-primary-foreground">
+            {view.badge}
+          </span>
+          <span className="font-black">{view.title}</span>
+        </span>
+        <span className="text-[10px] font-bold uppercase text-muted-foreground">
+          {collapsed ? "Afficher" : "Replier"}
+        </span>
+      </button>
+
+      {!collapsed && (
+        <div className="mt-3 space-y-2">
+          <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
+            {view.rows.map((row) => (
+              <div key={row.label} className="contents">
+                <dt className="truncate font-semibold text-muted-foreground">{row.label}</dt>
+                <dd className="font-black text-foreground">{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {view.diagnosticCodes.length > 0 && (
+            <div className="rounded-xl border bg-background/80 p-2">
+              <div className="mb-1 text-[10px] font-black uppercase text-muted-foreground">
+                Diagnostics
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {view.diagnosticCodes.map((code) => (
+                  <span
+                    key={code}
+                    className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground"
+                  >
+                    {code}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </aside>
   );
 }
 

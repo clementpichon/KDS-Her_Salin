@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-06 - Branchement runtime Pizzaiolo Shadow Comparison
+> Dernière mise à jour : 2026-08-06 - Panneau debug Pizzaiolo Shadow Comparison
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -4753,3 +4753,88 @@ Avant d’envisager une bascule du poste Pizzaiolo vers le nouveau moteur, il fa
 Objectif unique :
 
 - exécuter manuellement cette procédure sur un navigateur de test avec le debug activé, puis analyser le premier rapport réel sans correction automatique.
+
+---
+
+# 34. Panneau Debug Pizzaiolo Shadow Comparison
+
+## 34.1 Statut Au 2026-08-06
+
+Branche : `feature/pizzaiolo-shadow-debug-panel`
+
+Objectif :
+
+- observer le dernier `PizzaioloRuntimeShadowReport` sans ouvrir la console navigateur ;
+- conserver un panneau strictement développeur ;
+- ne pas modifier le comportement opérationnel du poste Pizzaiolo.
+
+Cette étape ne constitue pas une validation terrain.
+
+## 34.2 Conditions D’Affichage
+
+Debug désactivé :
+
+- aucun panneau n’est rendu ;
+- le panneau est absent du DOM ;
+- aucune comparaison runtime Pizzaiolo n’est programmée ;
+- aucun calcul supplémentaire n’est déclenché pour l’affichage.
+
+Debug activé :
+
+- le comparateur runtime fonctionne selon le branchement existant ;
+- le panneau lit le dernier rapport mémoire publié ;
+- le panneau s’abonne aux nouveaux rapports ;
+- le panneau ne relance pas `ProductionPlan`, `PizzaioloViewModel`, le snapshot legacy ou la comparaison.
+
+## 34.3 Fichiers Concernés
+
+- `src/routes/_kds/pizzaiolo.tsx` : affichage conditionnel du panneau et abonnement au rapport mémoire.
+- `src/lib/view-models/pizzaiolo-runtime-shadow.ts` : abonnement local aux rapports déjà publiés.
+- `src/lib/view-models/pizzaiolo-shadow-debug-panel.ts` : helper pur de présentation.
+- `src/lib/view-models/pizzaiolo-shadow-debug-panel.test.ts` : tests du panneau et des garanties.
+
+## 34.4 Contenu Affiché
+
+Le panneau affiche uniquement :
+
+- `Status` ;
+- `Plan usable` ;
+- `Legacy visible orders` ;
+- `ViewModel visible orders` ;
+- `Legacy actionable orders` ;
+- `ViewModel selectable orders` ;
+- `Legacy actionable pizzas` ;
+- `ViewModel actionable pizzas` ;
+- `Matches` ;
+- `Warnings` ;
+- `Blocking diagnostics` ;
+- `Unsupported` ;
+- `Duration`.
+
+Les codes diagnostics sont affichés uniquement lorsqu’un warning, une différence bloquante ou un cas unsupported existe.
+
+## 34.5 Confidentialité
+
+Le panneau n’affiche jamais :
+
+- nom client ;
+- téléphone ;
+- notes ;
+- commentaires ;
+- hash téléphone.
+
+Les tests vérifient que la vue du panneau ne contient pas de nom, téléphone, note confidentielle ou hash issus des données source.
+
+## 34.6 Limites
+
+- Le panneau reste temporaire et réservé au debug.
+- Le rapport n’est pas persisté.
+- Aucun historique n’est conservé.
+- Aucun poste ne consomme ce rapport pour décider.
+- L’observation terrain reste nécessaire avant toute migration d’interface.
+
+## 34.7 Prochaine Étape Recommandée
+
+Objectif unique :
+
+- ouvrir le poste Pizzaiolo sur un navigateur de test avec le debug activé, observer le panneau pendant quelques scénarios réels, puis analyser les diagnostics sans correction automatique.
