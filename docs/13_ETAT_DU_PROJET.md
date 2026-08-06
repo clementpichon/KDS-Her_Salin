@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-06 - Sécurisation comparateur Pizzaiolo legacy
+> Dernière mise à jour : 2026-08-06 - Branchement runtime Pizzaiolo Shadow Comparison
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -4284,3 +4284,214 @@ Cas couverts :
 Objectif unique :
 
 - brancher ce comparateur en mode Shadow Production développeur uniquement, avec rapport console/debug ou rapport en mémoire, sans modifier l'interface Pizzaiolo et sans changer les décisions opérationnelles.
+
+---
+
+# 32. Branchement développeur Pizzaiolo Shadow Comparison
+
+## 32.1 Statut au 2026-08-06
+
+Branche : `feature/pizzaiolo-runtime-shadow-comparison`
+
+Commits de base :
+
+- `239ec30 Add resilient shadow production runtime` ;
+- `c8b16cf Add scheduler-backed pizzaiolo view model` ;
+- `8d39484 Add pizzaiolo legacy shadow comparison`.
+
+Objectif :
+
+- exécuter silencieusement le comparateur Pizzaiolo legacy / `PizzaioloViewModel` pendant l'utilisation du poste Pizzaiolo ;
+- limiter l'affichage aux développeurs lorsque le debug Shadow Production est activé ;
+- observer les écarts sans changer le comportement opérationnel.
+
+Ce branchement n'est pas une validation terrain. Il prépare seulement l'observation contrôlée sur service réel.
+
+## 32.2 Point de collecte runtime
+
+Point d'intégration minimal :
+
+- `src/routes/_kds/pizzaiolo.tsx`.
+
+Données utilisées :
+
+- `orders` déjà fournis par `useOrders()` ;
+- `paninoItems` déjà fournis par `usePaninoOrderItems()` ;
+- `pizzas` déjà fournies par `usePizzas()`.
+
+Le branchement se limite à un `useEffect()` non rendu. Il vérifie d'abord l'interrupteur debug Shadow Production, puis appelle `schedulePizzaioloRuntimeShadowComparison(...)` uniquement si le debug est activé.
+
+Aucune nouvelle requête Supabase n'est ajoutée pour cette comparaison. Aucun état d'interface n'est ajouté. Aucun rendu, toast, badge ou action utilisateur n'est modifié.
+
+Debug désactivé :
+
+- aucune comparaison n'est programmée ;
+- aucun `ProductionPlan` n'est construit pour ce comparateur Pizzaiolo ;
+- aucun `PizzaioloViewModel`, snapshot legacy ou rapport de comparaison n'est produit ;
+- aucun coût de calcul supplémentaire n'est ajouté au poste Pizzaiolo.
+
+Debug activé :
+
+- la comparaison complète est programmée de manière différée et coalescée ;
+- le calcul reste exécuté sur le thread principal ;
+- le rapport reste uniquement en mémoire navigateur ;
+- aucun poste ne consomme le résultat.
+
+## 32.3 Runner Runtime
+
+Module :
+
+- `src/lib/view-models/pizzaiolo-runtime-shadow.ts`.
+
+Chaîne exécutée :
+
+```text
+orders / paninoItems / pizzas déjà chargés
+-> buildProductionPlan()
+-> buildPizzaioloViewModel()
+-> buildLegacyPizzaioloSnapshot()
+-> comparePizzaioloViewModelWithLegacy()
+-> PizzaioloRuntimeShadowReport en mémoire
+```
+
+Le runner orchestre les briques existantes. Il ne réimplémente ni le Scheduler, ni le comparateur, ni les règles legacy.
+
+## 32.4 Couverture des Données
+
+Le rapport expose :
+
+- `coverage.orders` ;
+- `coverage.orderItems` ;
+- `coverage.paninoItems` ;
+- `coverage.pizzas`.
+
+Le comparateur complet ne s'exécute que si les données nécessaires sont disponibles pour les deux projections.
+
+Comportement attendu :
+
+- si `paninoItems` manque, statut `skipped` avec diagnostic `pizzaiolo_comparison_panino_data_missing` ;
+- si le catalogue pizzas manque, statut `skipped` avec diagnostic `pizzaiolo_comparison_pizza_catalog_missing` ;
+- ces absences ne deviennent pas des `blocking_difference`.
+
+## 32.5 Mode Debug
+
+Le debug réutilise les mêmes interrupteurs que Shadow Production :
+
+- `window.__KDS_SHADOW_PRODUCTION_DEBUG__ = true` ;
+- `localStorage["kds.shadowProduction.debug"] = "1"` ;
+- `?shadowProductionDebug=1`.
+
+En mode normal :
+
+- aucune comparaison runtime n'est programmée ;
+- aucun rapport Pizzaiolo Shadow Comparison n'est calculé ;
+- aucun log détaillé ;
+- aucune interface ;
+- aucun toast ;
+- aucune persistance.
+
+En mode debug :
+
+- comparaison runtime complète ;
+- synthèse console `PIZZAIOLO SHADOW COMPARISON` ;
+- compteurs legacy / ViewModel alignés ;
+- durée totale ;
+- diagnostics détaillés uniquement s'il existe warning, différence bloquante ou unsupported.
+
+La synthèse console ne contient pas de nom client ni de téléphone. Les identifiants techniques peuvent apparaître dans les diagnostics développeur lorsque cela aide à localiser un écart.
+
+## 32.6 Coalescence
+
+Le runner fournit `createPizzaioloRuntimeShadowScheduler()` et `schedulePizzaioloRuntimeShadowComparison()`.
+
+Garanties :
+
+- plusieurs programmations rapprochées ne déclenchent qu'un calcul sur le dernier snapshot reçu ;
+- le dernier rapport publié correspond au snapshot le plus récent dans la file ;
+- la mise à jour React normale n'est pas retardée ;
+- le calcul différé et coalescé reste sur le thread principal ;
+- aucun Web Worker n'est introduit dans cette branche.
+
+## 32.7 Résilience
+
+Si une étape échoue :
+
+- l'exception est capturée ;
+- un rapport `failed` est publié en mémoire ;
+- le KDS continue normalement ;
+- aucune donnée n'est écrite ;
+- aucune action Pizzaiolo n'est empêchée.
+
+Si le `ProductionPlan` est non exploitable :
+
+- la comparaison peut produire un rapport `success` avec `planUsable: false` ;
+- un warning `pizzaiolo_comparison_plan_unusable` est ajouté ;
+- aucune correction automatique n'est tentée.
+
+## 32.8 Performance
+
+Le rapport mesure :
+
+- `productionPlanMs` ;
+- `viewModelMs` ;
+- `legacySnapshotMs` ;
+- `comparisonMs` ;
+- `totalMs`.
+
+Le seuil non bloquant réutilise `SHADOW_PRODUCTION_SLOW_THRESHOLD_MS = 100`.
+
+Un dépassement ajoute le warning `pizzaiolo_comparison_slow`, sans rendre le plan inutilisable et sans modifier l'interface.
+
+## 32.9 Garanties De Non-Régression
+
+Cette étape ne modifie pas :
+
+- l'interface Pizzaiolo ;
+- les actions du poste ;
+- `buildPizzaioloQueue()` ;
+- les décisions opérationnelles ;
+- le Scheduler legacy ;
+- Supabase ;
+- les statuts ;
+- les migrations ;
+- les données persistées.
+
+Le KDS legacy reste l'unique comportement visible et opérationnel.
+
+## 32.10 Tests Ajoutés
+
+Fichier :
+
+- `src/lib/view-models/pizzaiolo-runtime-shadow.test.ts`.
+
+Cas couverts :
+
+- règle pure de déclenchement runtime : debug désactivé -> non programmé, debug activé -> programmé ;
+- comparaison réussie avec données complètes ;
+- absence de `paninoItems` -> `skipped` ;
+- absence de catalogue pizzas -> `skipped` ;
+- `ProductionPlan` non exploitable ;
+- comparaison avec warnings ;
+- comparaison avec différences bloquantes ;
+- données ambiguës produisant `unsupported` ;
+- exception capturée sans propagation ;
+- coalescence de plusieurs programmations rapprochées ;
+- seul le dernier rapport est publié ;
+- sortie console uniquement en mode debug ;
+- absence de nom client et téléphone dans la synthèse console ;
+- absence de mutation ;
+- déterminisme avec horloge injectée.
+
+## 32.11 Limites Restantes
+
+- Le rapport reste local en mémoire navigateur.
+- Aucun historique de comparaison n'est conservé.
+- Aucun poste ne consomme encore le résultat.
+- Les diagnostics ne doivent pas encore déclencher de correction automatique.
+- L'observation terrain doit porter sur plusieurs services représentatifs avant toute bascule.
+
+## 32.12 Prochaine Étape Recommandée
+
+Objectif unique :
+
+- observer en environnement réel le rapport debug Pizzaiolo Shadow Comparison sur plusieurs services, sans modifier l'interface Pizzaiolo ni les décisions opérationnelles.

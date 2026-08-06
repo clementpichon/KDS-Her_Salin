@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useOrders, usePaninoOrderItems, usePizzas, useSettings } from "@/hooks/use-kds-data";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,11 @@ import {
   pizzaProductionStatus,
   type PizzaDisplayDetails,
 } from "@/lib/pizza-production";
+import { isShadowProductionDebugEnabled } from "@/lib/shadow-production";
+import {
+  schedulePizzaioloRuntimeShadowComparison,
+  shouldSchedulePizzaioloRuntimeShadowComparison,
+} from "@/lib/view-models/pizzaiolo-runtime-shadow";
 import type { Order, OrderItem, Pizza } from "@/lib/kds-types";
 
 export const Route = createFileRoute("/_kds/pizzaiolo")({
@@ -103,6 +108,25 @@ function Pizzaiolo() {
 
   const paninoByOrder = useMemo(() => buildPaninoItemsByOrder(paninoItems), [paninoItems]);
   const list = useMemo(() => buildPizzaioloQueue(orders, paninoItems), [orders, paninoItems]);
+
+  useEffect(() => {
+    if (!shouldSchedulePizzaioloRuntimeShadowComparison(isShadowProductionDebugEnabled())) return;
+
+    schedulePizzaioloRuntimeShadowComparison({
+      idSeed: "kds-runtime-pizzaiolo",
+      orders,
+      paninoItems,
+      pizzas,
+      coverage: {
+        orders: true,
+        orderItems: true,
+        paninoItems: true,
+        pizzas: pizzas.length > 0,
+      },
+      debug: true,
+    });
+  }, [orders, paninoItems, pizzas]);
+
   const selectedIds = useMemo(
     () => new Set(slots.flatMap((slot) => (slot.item ? [slot.item.id] : []))),
     [slots],
