@@ -4,7 +4,7 @@
 
 > Version : 1.0  
 > Statut : Document vivant à compléter après audit du dépôt  
-> Dernière mise à jour : 2026-08-05 - ViewModel Pizzaiolo ProductionPlan
+> Dernière mise à jour : 2026-08-06 - Sécurisation comparateur Pizzaiolo legacy
 > Dépendances :
 >
 > - `00_ARCHITECTURE_GLOBALE.md`
@@ -3963,6 +3963,7 @@ Statut :
 
 - implémenté en mémoire dans `src/lib/view-models/pizzaiolo-view-model.ts` ;
 - testé dans `src/lib/view-models/pizzaiolo-view-model.test.ts` ;
+- commit : `c8b16cf Add scheduler-backed pizzaiolo view model` ;
 - non branché à React ;
 - non utilisé par les postes ;
 - sans requête Supabase, sans migration, sans Dispatcher et sans persistance.
@@ -4089,3 +4090,197 @@ Cas couverts :
 Objectif unique :
 
 - valider ce ViewModel sur des snapshots `ProductionPlan` plus riches, puis créer une comparaison silencieuse avec les données actuellement affichées par le poste Pizzaiolo legacy, sans brancher l'interface.
+
+---
+
+# 31. Comparaison silencieuse Pizzaiolo legacy
+
+## 31.1 Statut au 2026-08-06
+
+Branche : `feature/pizzaiolo-legacy-shadow-comparison`
+
+Objectif :
+
+- comparer en lecture seule le `PizzaioloViewModel` issu du `ProductionPlan` avec les données que le poste Pizzaiolo legacy rend visibles ou actionnables ;
+- détecter les écarts avant tout branchement d'interface ;
+- ne corriger automatiquement ni le legacy, ni le `ProductionPlan`, ni le ViewModel.
+
+Statut :
+
+- implémenté en mémoire dans `src/lib/view-models/pizzaiolo-legacy-shadow-comparison.ts` ;
+- testé dans `src/lib/view-models/pizzaiolo-legacy-shadow-comparison.test.ts` ;
+- non branché à React ;
+- sans hook modifié ;
+- sans requête Supabase supplémentaire ;
+- sans écriture, migration, Dispatcher ou persistance.
+
+## 31.2 Poste legacy audité
+
+Fichiers concernés :
+
+- `src/routes/_kds/pizzaiolo.tsx` ;
+- `src/hooks/use-kds-data.ts` ;
+- `src/lib/pizzaiolo-queue.ts` ;
+- `src/lib/pizza-production.ts` ;
+- `src/lib/pizzaiolo-batch-planner.ts`.
+
+Fonctionnement legacy observé :
+
+- la route utilise `useOrders()`, `usePaninoOrderItems()`, `usePizzas()` et `useSettings()` ;
+- la file affichée est construite avec `buildPizzaioloQueue(orders, paninoItems)` ;
+- seules les commandes actives sont prises en compte ;
+- les pizzas affichées/actionnables sont celles dont `pizzaProductionStatus(item, order) === "to_prepare"` ;
+- les commandes `delivered` et `cancelled` sont exclues de la file ;
+- les pizzas `in_oven` ou `ready` ne sont plus actionnables au poste Pizzaiolo ;
+- les commandes sont triées par position manuelle `pizzaiolo_queue_position`, puis par heure demandée, puis par nom client ;
+- les commandes d'un même client, même jour et même heure sont regroupées dans un `PizzaioloQueueJob` ;
+- les détails affichés utilisent `getPizzaDisplayDetails()` : base, suppléments restants, retraits restants et découpe ;
+- les commandes mixtes conservent un contexte Pani'NO/Fish/frites via les `panino_order_items` non terminés ;
+- le plan de travail à quatre disques, la sélection tactile et la suggestion intelligente restent des états React locaux et ne sont pas modélisés dans ce comparateur.
+
+## 31.3 Snapshot legacy pur
+
+Le type `LegacyPizzaioloSnapshot` représente uniquement la projection legacy visible/actionnable :
+
+- commandes visibles ;
+- commandes actionnables ;
+- pizzas visibles ;
+- pizzas actionnables ;
+- jobs Pizzaiolo ;
+- contexte produits par commande ;
+- pizzas avec base, suppléments, retraits, découpe et statut ;
+- pizzas dont la base legacy reste ambiguë.
+
+Contrat explicite :
+
+- `visibleOrderIds` : commandes conservées par la file legacy comme contexte affichable au poste Pizzaiolo ;
+- `actionableOrderIds` : commandes pour lesquelles le poste Pizzaiolo a une action réelle à effectuer ;
+- `visiblePizzaItemIds` : pizzas présentes dans la file legacy ;
+- `actionablePizzaItemIds` : pizzas encore préparables par le pizzaiolo.
+
+Construction :
+
+- fonction `buildLegacyPizzaioloSnapshot({ orders, paninoItems, pizzas })` ;
+- aucune référence React ;
+- aucune requête Supabase ;
+- aucune mutation des données d'entrée ;
+- réutilisation des helpers legacy purs déjà existants.
+
+## 31.4 Comparateur
+
+Fonction :
+
+- `comparePizzaioloViewModelWithLegacy({ legacy, viewModel })`.
+
+Rapport :
+
+- `matches` ;
+- `warnings` ;
+- `blockingDifferences` ;
+- `unsupported` ;
+- `summary`.
+
+Comparaisons actuellement implémentées :
+
+- commandes visibles legacy vs commandes de contexte encore pertinentes dans `viewModel.groupedOrders` ;
+- commandes actionnables legacy vs commandes sélectionnables dans `viewModel.selection.selectableOrderIds` ;
+- pizzas actionnables legacy vs pizzas prêtes à préparer du ViewModel ;
+- ordre des commandes ;
+- ordre des pizzas ;
+- statut actionnable ;
+- base ;
+- suppléments ;
+- retraits ;
+- découpe ;
+- contexte de commande mixte ;
+- éléments présents dans le legacy mais absents du ViewModel ;
+- éléments présents dans le ViewModel mais absents du legacy ;
+- bases ambiguës non comparables avec certitude.
+
+La comparaison ne mélange plus visibilité et actionnabilité :
+
+- `visible_order_set_matches` / `visible_order_set_differs` portent sur le contexte visible ;
+- `actionable_order_set_matches` / `actionable_order_set_differs` portent sur la sélection possible ;
+- `actionable_pizza_set_matches` / `actionable_pizza_set_differs` portent sur les pizzas réellement préparables.
+
+Cas Pani'NO sans pizza :
+
+- une commande Pani'NO sans pizza peut rester visible au Pizzaiolo pour le pain ;
+- elle est actionnable seulement si une Work Unit Pizzaiolo planifiée existe ;
+- l'absence de pizza ne crée pas automatiquement de différence bloquante ;
+- la couverture runtime incomplète des `panino_order_items` reste suivie séparément dans Shadow Production.
+
+Regroupement legacy :
+
+- le legacy peut regrouper plusieurs commandes dans un même `PizzaioloQueueJob` lorsqu'elles partagent client, jour et heure ;
+- le ViewModel reste groupé par `orderId` ;
+- le comparateur compare les ensembles par identifiant de commande et l'ordre séparément ;
+- cette différence structurelle ne doit pas faire perdre une commande ni devenir une erreur métier automatique.
+
+Portée des statuts :
+
+- approche minimale retenue ;
+- les statuts non actionnables (`in_oven`, `ready`, `delivered`, `cancelled`) sont validés par leur exclusion des ensembles visibles/actionnables ;
+- leurs détails internes ne sont pas encore comparés article par article ;
+- cette limite est acceptable avant tout branchement runtime.
+
+Classification :
+
+- `match` : contenu cohérent ;
+- `warning` : écart non bloquant, notamment ordre legacy manuel différent de l'ordre Scheduler ;
+- `blocking_difference` : écart pouvant modifier ce qui est visible ou actionnable ;
+- `unsupported` : donnée ambiguë ou interaction UI locale non modélisée.
+
+Un `pizza_details_match` n'est produit que lorsque tous les détails comparables ont été vérifiés avec certitude : statut, base, suppléments, retraits et découpe. Si au moins un détail est `unsupported`, par exemple une base ambiguë, aucun match global de détail n'est ajouté pour cette pizza.
+
+Résumé du rapport :
+
+- `legacyVisibleOrders` et `viewModelVisibleOrders` comparent les commandes visibles/contextuelles ;
+- `legacyActionableOrders` et `viewModelSelectableOrders` comparent les commandes actionnables/sélectionnables ;
+- `legacyVisiblePizzas`, `legacyActionablePizzas` et `viewModelActionablePizzas` distinguent visibilité legacy et action réelle ;
+- `isConsistent` reste fondé sur l'absence de `blockingDifferences`, même si des `warning` ou `unsupported` peuvent subsister.
+
+Les compteurs `matches`, `warnings`, `blockingDifferences` et `unsupported` représentent des nombres de diagnostics émis. Ils ne doivent pas être lus comme un nombre d'entités distinctes : un même écart d'ensemble peut produire à la fois un diagnostic agrégé `*_set_differs` et un ou plusieurs diagnostics par identifiant absent. Aucun consommateur opérationnel ne dépend encore de ces compteurs.
+
+## 31.5 Tests ajoutés
+
+Fichier :
+
+- `src/lib/view-models/pizzaiolo-legacy-shadow-comparison.test.ts`
+
+Cas couverts :
+
+- même contenu et même ordre ;
+- commandes visibles identiques ;
+- commandes actionnables identiques ;
+- commande visible mais non actionnable ;
+- même contenu mais ordre différent ;
+- pizza visible legacy absente du ViewModel ;
+- pizza ViewModel absente du legacy ;
+- commande annulée ;
+- commande terminée ;
+- pizza déjà en cuisson ;
+- commande mixte ;
+- commande Pani'NO sans pizza ;
+- deux commandes regroupées dans un même job legacy ;
+- base modifiée ;
+- suppléments et retraits ;
+- découpe ;
+- données legacy ambiguës ;
+- base ambiguë sans faux `pizza_details_match` ;
+- déterminisme ;
+- absence de mutation.
+
+## 31.6 Limitations restantes
+
+- Le comparateur n'est pas encore exécuté automatiquement en Shadow Production.
+- Les quatre disques de préparation restent hors modèle.
+- Les sélections utilisateur en cours ne sont pas comparées.
+- Les actions de réorganisation et suppression restent hors périmètre de comparaison.
+- Les écarts ne déclenchent aucune correction automatique.
+
+## 31.7 Prochaine étape recommandée
+
+Objectif unique :
+
+- brancher ce comparateur en mode Shadow Production développeur uniquement, avec rapport console/debug ou rapport en mémoire, sans modifier l'interface Pizzaiolo et sans changer les décisions opérationnelles.
