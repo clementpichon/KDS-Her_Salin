@@ -4495,3 +4495,261 @@ Cas couverts :
 Objectif unique :
 
 - observer en environnement réel le rapport debug Pizzaiolo Shadow Comparison sur plusieurs services, sans modifier l'interface Pizzaiolo ni les décisions opérationnelles.
+
+---
+
+# 33. Procédure d’observation terrain Pizzaiolo Shadow Comparison
+
+## 33.1 Objectif
+
+Cette procédure sert à observer le comparateur Pizzaiolo legacy / `PizzaioloViewModel` sur un navigateur ou une tablette de test.
+
+Elle ne valide pas encore le poste Pizzaiolo en production.
+
+Elle ne doit entraîner :
+
+- aucune modification de l’interface ;
+- aucune action opérationnelle issue du `ProductionPlan` ;
+- aucune écriture Supabase ;
+- aucune correction automatique ;
+- aucune persistance des rapports ;
+- aucun envoi réseau supplémentaire.
+
+## 33.2 Activation Du Debug
+
+Le comparateur runtime Pizzaiolo n’est programmé que lorsque le debug Shadow Production est activé.
+
+Méthodes supportées :
+
+| Méthode | Commande ou URL | Rechargement nécessaire | Persistance | Désactivation | Périmètre |
+| --- | --- | --- | --- | --- | --- |
+| Variable fenêtre | `window.__KDS_SHADOW_PRODUCTION_DEBUG__ = true` | Pas obligatoire si une mise à jour Realtime arrive ensuite, mais recommandé pour capturer immédiatement un premier snapshot. | Non. Perdue au rechargement et à la fermeture de l’onglet. | `window.__KDS_SHADOW_PRODUCTION_DEBUG__ = false` ou recharger la page. | Onglet courant uniquement. |
+| LocalStorage | `localStorage.setItem("kds.shadowProduction.debug", "1")` | Recommandé après activation pour lancer la comparaison dès le chargement du poste. | Oui, pour ce navigateur, ce profil et ce domaine. | `localStorage.removeItem("kds.shadowProduction.debug")`, puis recharger. | Navigateur/profil courant sur le même domaine. |
+| Paramètre URL | Ajouter `?shadowProductionDebug=1` à l’URL | La page doit être chargée avec ce paramètre. | Non comme réglage global, mais reste actif tant que l’URL contient le paramètre. | Retirer le paramètre de l’URL et recharger. | Onglet ou lien concerné. |
+
+Recommandation terrain :
+
+- utiliser `localStorage.setItem("kds.shadowProduction.debug", "1")` sur un appareil de test ;
+- recharger le poste Pizzaiolo ;
+- retirer la clé après observation avec `localStorage.removeItem("kds.shadowProduction.debug")`.
+
+Ces activations concernent uniquement le navigateur ou l’appareil utilisé. Elles ne changent pas le comportement des autres postes.
+
+## 33.3 Procédure Courte D’Observation
+
+1. Ouvrir le poste Pizzaiolo sur un navigateur ou une tablette de test.
+2. Ouvrir la console développeur.
+3. Activer le debug avec l’une des méthodes de la section 33.2.
+4. Recharger la page du poste Pizzaiolo.
+5. Créer ou charger quelques commandes représentatives.
+6. Attendre les mises à jour Realtime normales.
+7. Repérer dans la console les rapports commençant par :
+
+```text
+PIZZAIOLO SHADOW COMPARISON
+```
+
+8. Relever uniquement les compteurs et codes de diagnostics définis ci-dessous.
+9. Désactiver le debug après observation.
+
+L’opérateur ne doit pas modifier sa manière normale d’utiliser le poste.
+
+## 33.4 Scénarios Recommandés
+
+### Scénario A — Pizza Simple
+
+Préparer :
+
+- une commande ;
+- une pizza ;
+- statut `to_prepare`.
+
+Attendu :
+
+- une commande visible ;
+- une commande actionnable ;
+- une pizza actionnable ;
+- aucune différence bloquante.
+
+### Scénario B — Fournée Complète
+
+Préparer :
+
+- une ou plusieurs commandes ;
+- quatre pizzas `to_prepare`.
+
+Observer :
+
+- ordre legacy ;
+- ordre ViewModel ;
+- pizzas actionnables ;
+- durée totale.
+
+### Scénario C — Commandes Multiples
+
+Préparer :
+
+- plusieurs commandes proches ;
+- éventuellement même horaire ;
+- éventuellement position manuelle legacy.
+
+Observer :
+
+- warnings d’ordre ;
+- égalité des ensembles ;
+- absence de perte ou duplication.
+
+### Scénario D — Pizza En Cuisson
+
+Préparer :
+
+- une pizza passée en `in_oven`.
+
+Attendu :
+
+- la pizza ne doit plus être actionnable au Pizzaiolo ;
+- aucune fausse différence bloquante.
+
+### Scénario E — Commande Annulée Ou Livrée
+
+Attendu :
+
+- exclusion cohérente des ensembles visibles/actionnables.
+
+### Scénario F — Base Et Modifications
+
+Inclure :
+
+- base remplacée ;
+- supplément ;
+- retrait ;
+- découpe.
+
+Observer :
+
+- détails cohérents ;
+- aucun faux `pizza_details_match` si une donnée est ambiguë.
+
+### Scénario G — Commande Mixte
+
+Inclure si possible :
+
+- pizza ;
+- Pani’NO ;
+- Fish & NO ou frites.
+
+Observer :
+
+- commandes visibles ;
+- besoin de pain Pani’NO ;
+- contexte mixte ;
+- absence de faux écart pizza.
+
+## 33.5 Informations À Relever
+
+Pour chaque rapport, relever uniquement :
+
+```text
+Date et heure :
+Scénario :
+Nombre de commandes :
+Nombre de pizzas :
+Nombre d’items Pani’NO :
+Status :
+Plan usable :
+Legacy visible orders :
+ViewModel visible orders :
+Legacy actionable orders :
+ViewModel selectable orders :
+Legacy actionable pizzas :
+ViewModel actionable pizzas :
+Matches :
+Warnings :
+Blocking diagnostics :
+Unsupported :
+Duration :
+Codes des diagnostics :
+Contexte opérationnel :
+```
+
+Ne recopier aucun nom client, téléphone, note libre, commentaire client ou hash téléphone.
+
+Les identifiants techniques peuvent être conservés uniquement s’ils sont nécessaires pour retrouver une entité pendant l’analyse.
+
+## 33.6 Classification Des Diagnostics
+
+Pour chaque diagnostic observé, utiliser ce format :
+
+```text
+Code :
+Classification :
+Commande ou article technique :
+Comportement legacy :
+Comportement ViewModel :
+Cause probable :
+Risque terrain :
+Erreur métier démontrée :
+Correction nécessaire :
+Module potentiellement concerné :
+```
+
+Classifications possibles :
+
+```text
+comportement legacy volontaire
+ordre manuel legacy
+donnée source ambiguë
+couverture incomplète
+limitation documentée
+erreur du snapshot legacy
+erreur du ViewModel
+erreur du ProductionPlan
+erreur du Scheduler
+faux positif du comparateur
+à confirmer
+```
+
+## 33.7 Règles De Décision
+
+- Un `warning` ne justifie pas automatiquement une correction.
+- Un `unsupported` ne doit pas devenir automatiquement bloquant.
+- Une différence d’ordre liée à `pizzaiolo_queue_position` peut être volontaire.
+- Une correction du moteur nécessite une erreur métier démontrable.
+- Un seul rapport isolé ne suffit pas pour déclarer un comportement validé terrain.
+- Plusieurs services représentatifs sans anomalie majeure sont nécessaires avant toute bascule d’interface.
+
+## 33.8 Confidentialité Console
+
+Audit réalisé sur :
+
+- `src/lib/view-models/pizzaiolo-runtime-shadow.ts` ;
+- `src/lib/view-models/pizzaiolo-legacy-shadow-comparison.ts` ;
+- `src/lib/view-models/pizzaiolo-runtime-shadow.test.ts`.
+
+Constat :
+
+- la synthèse console affiche uniquement des compteurs, statuts et durées ;
+- le test existant vérifie l’absence de nom client et téléphone dans la synthèse console ;
+- les diagnostics détaillés affichent des identifiants techniques, statuts, bases, suppléments, retraits et découpes lorsqu’ils sont nécessaires ;
+- les diagnostics détaillés ne transportent pas `customer_name`, `customer_phone`, `customer_phone_hash`, `notes` ou commentaire client.
+
+Règle terrain :
+
+- ne jamais copier de donnée personnelle dans le rapport d’observation ;
+- conserver les identifiants techniques uniquement lorsqu’ils sont indispensables à l’analyse.
+
+## 33.9 Critères Avant Toute Migration Du Poste
+
+Avant d’envisager une bascule du poste Pizzaiolo vers le nouveau moteur, il faudra disposer :
+
+- de plusieurs observations sur services représentatifs ;
+- d’une absence répétée de différences bloquantes non expliquées ;
+- d’une analyse claire des warnings d’ordre ;
+- d’une couverture réelle de commandes simples, fournées complètes, commandes multiples, pizzas en cuisson, commandes annulées/livrées, bases/modifications et commandes mixtes ;
+- d’une décision explicite validant que le `PizzaioloViewModel` peut remplacer progressivement les vues legacy.
+
+## 33.10 Prochaine Étape Recommandée
+
+Objectif unique :
+
+- exécuter manuellement cette procédure sur un navigateur de test avec le debug activé, puis analyser le premier rapport réel sans correction automatique.
